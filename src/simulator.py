@@ -34,7 +34,7 @@ class AFMSimulator:
         return grad
 
     def get_projection_library(self, pdb,  zshift_range=None, angular_dist=10,
-                           verbose=True, near_point=None, near_cutoff=30, plot=False):
+                           verbose=True, near_point=None, near_cutoff=30):
         ZERO_CUTOFF =5.0 # Angstrom
 
         # Compute directions views

@@ -34,6 +34,7 @@ class AFMFitting:
         g_img = self.img
         g_com = get_com(g_img)
         g_pcs, _ = polarTransform.convertToPolarImage(g_img.T, radiusSize=radiusSize, angleSize=angleSize, center=g_com)
+        g_pcs_fft = np.fft.fft(g_pcs, axis=0)
 
         # outputs
         angles = np.zeros((num_pts, 3))
@@ -54,7 +55,7 @@ class AFMFitting:
                                                                   zshift_list=image_library.zshift_range)
 
             # get the min value of MSE
-            mse[i] = min_mse
+            mse[i] = -min_mse
 
             # Find the correct rotation and translation corresponding to the rotational matching
             R2 = generate_euler_matrix_deg(np.array([-angle_rm, 0.0, 0.0]))
@@ -68,11 +69,11 @@ class AFMFitting:
         if plot:
             fig, ax = plt.subplots(3, 5, figsize=(20, 15))
             for i in range(3):
-                min_mse = np.argsort(mse)[i]
-                out_coords = np.dot(R[min_mse], self.pdb.coords.T).T
-                out_coords += shifts[min_mse]
+                mi = np.argsort(mse)[i]
+                out_coords = np.dot(R[mi], self.pdb.coords.T).T
+                out_coords += shifts[mi]
                 pdbt = self.pdb.copy()
-                pest = self.simulator.pdb2afm(pdbt, zshift = image_library.zshifts[min_mse])
+                pest = self.simulator.pdb2afm(pdbt, zshift = image_library.zshifts[mi])
                 ax[i, 0].imshow(pest.T, cmap="afmhot", origin="lower")
                 ax[i, 1].imshow(self.img.T, cmap="afmhot", origin="lower")
                 ax[i, 2].imshow(np.square(self.img.T - pest.T), cmap="jet", origin="lower")
@@ -375,7 +376,7 @@ def get_com(img):
 def corr_sum_njit(f_pcs_fft, g_pcs_fft, angleSize, radiusSize):
     corr_fourier = np.zeros((angleSize), dtype=np.complex128)
     for r in range(radiusSize):
-        corr_fourier += r * g_pcs_fft[:, r] * np.conjugate(f_pcs_fft[:, r])
+        corr_fourier += g_pcs_fft[:, r] * np.conjugate(f_pcs_fft[:, r])
     return corr_fourier
 
 
@@ -386,6 +387,13 @@ def get_corr_fourier(f_pcs_fft, g_pcs_fft, angleSize, radiusSize):
     argmax_corr = np.argmax(corr)
     max_corr = corr[argmax_corr]
     return  (argmax_corr*np.pi*2)/angleSize, max_corr
+def get_mse_fourier(f_pcs_fft, g_pcs_fft, angleSize):
+    corr_fourier = np.sum(g_pcs_fft * np.conjugate(f_pcs_fft), axis=1)
+    corr = np.fft.ifftn(corr_fourier).real
+
+    argmax_corr = np.argmax(corr)
+    max_corr = corr[argmax_corr]
+    return  (argmax_corr*np.pi*2)/angleSize, -2*max_corr
 def get_mse_img(g_pcs, f_pcs,angleSize):
     mse = np.zeros(angleSize)
     for i in range(angleSize):
@@ -428,7 +436,7 @@ def _rotational_matching_mse(g_pcs, f_imgs, g_com, imageSize, angleSize, radiusS
         Z_SHIFT_SEARCH = 1
     else:
         Z_SHIFT_SEARCH = len(zshift_list)
-    curr_mse = -1.0
+    curr_mse = None
     curr_angle = 0.0
     for z in range(Z_SHIFT_SEARCH):
         if zshift_list is None:
@@ -446,10 +454,12 @@ def _rotational_matching_mse(g_pcs, f_imgs, g_com, imageSize, angleSize, radiusS
                 tmp_com = f_com + np.array([xi, yi])
 
                 f_pcs, _ = polarTransform.convertToPolarImage(f_img.T, radiusSize=radiusSize, angleSize=angleSize, center=tmp_com)
+                f_pcs_fft = np.fft.fft(f_pcs, axis=0)
 
-                angle, min_mse = get_mse_img(g_pcs, f_pcs, angleSize)
+                angle, min_mse = get_mse_img(f_pcs=g_pcs, g_pcs=f_pcs, angleSize=angleSize)
+                # angle, min_mse = get_mse_fourier(g_pcs_fft=g_pcs_fft, f_pcs_fft=f_pcs_fft, angleSize=angleSize)
 
-                if (min_mse< curr_mse) or (curr_mse==-1.0):
+                if (curr_mse is None) or (min_mse< curr_mse) :
                     curr_mse=min_mse
                     curr_angle = angle
                     curr_com = tmp_com

@@ -49,6 +49,7 @@ def viewAFM(img, vsize=1.0):
         im = ax.imshow(img[0].T, origin="lower", cmap="afmhot", vmax = max_amp , aspect='auto',
                        extent=[-extent,extent,-extent,extent])
         ax.grid(False)
+        cbar = fig.colorbar(im)
 
     else:
         for i in range(nimg):
@@ -56,4 +57,4 @@ def viewAFM(img, vsize=1.0):
             im = ax[i].imshow(img[i].T, origin="lower", cmap="afmhot", vmax = max_amp, aspect='auto',
                               extent=[-extent,extent,-extent,extent])
             ax[i].grid(False)
-    cbar = fig.colorbar(im)
+            cbar = fig.colorbar(im)

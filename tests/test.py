@@ -105,7 +105,7 @@ class TestFitting(unittest.TestCase):
         angles, shifts, mse = fit.projection_matching(image_library=library, angular_dist=angular_dist, max_shift_search=5,
                                 verbose=False, plot = False)
         min_angle = [get_angular_distance(angles[np.argsort(mse)][i], np.zeros(3)) for i in range(len(mse))]
-        self.assertTrue(0, np.argmin(min_angle))
+        self.assertEqual(0, np.argmin(min_angle))
 
     def test_flexile_rigid_fitting(self):
         nma = NormalModesRTB.read_NMA(join(get_tests_data(), "nma"))
