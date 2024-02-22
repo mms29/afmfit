@@ -5,6 +5,8 @@ from skimage.filters import gaussian
 from scipy.ndimage import binary_erosion, binary_dilation
 from pathlib import Path
 from os.path import join
+from scipy.spatial.transform import Rotation
+
 
 def get_project_root() -> Path:
     return Path(__file__).parent.parent
@@ -37,10 +39,14 @@ def angular_distance(p1, p2):
 def get_angular_distance(a1, a2):
     R1 = generate_euler_matrix_deg(a1)
     R2 = generate_euler_matrix_deg(a2)
-    p = np.array([1,0,0]).T
+    p = np.ones(3).T
     p1 = np.dot(R1,p)
     p2 = np.dot(R2,p)
-    return np.rad2deg(np.arccos(np.dot(p1,p2)/(np.linalg.norm(p1)*np.linalg.norm(p2))))
+    v = np.dot(p1, p2)/(np.linalg.norm(p1)*np.linalg.norm(p2))
+    if v >1.0:
+        v=1.0
+    a = np.arccos(v)
+    return np.rad2deg(a)
 
 def select_points_in_sphere(points, corr, n_points, threshold, plot =False):
 
@@ -92,6 +98,15 @@ def get_sphere_near(angular_dist, near_point, near_cutoff):
 #                   [- sin(c) *  cos(b) * cos(a) - cos(c) * sin(a), - sin(c) * cos(b) * sin(a) + cos(c) * cos(a), sin(c) * sin(b)],
 #                   [sin(b) * cos(a), sin(b) * sin(a), cos(b)]])
 #     return R
+# def generate_euler_matrix_deg(angles):
+# # def matrix_from_euler(angles):
+#     return Rotation.from_euler("zyz", -np.array(angles), degrees=True).as_matrix()
+#
+#
+# def matrix2eulerAngles(A):
+# # def euler_from_matrix(A):
+#     return Rotation.from_matrix(A.T).as_euler("zyz", degrees=True)[::-1]
+
 def generate_euler_matrix_deg(angles):
     a,b,c = np.deg2rad(angles)
     cos = np.cos

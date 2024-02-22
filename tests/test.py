@@ -88,22 +88,26 @@ class TestFitting(unittest.TestCase):
 
         fit = AFMFitting(pdb=ref, img=pexp, simulator=sim, nma=nma, target_pdb=target)
         dcd, mse, rmsd, qt = fit.fit_nma(n_iter=5, gamma=10, gamma_rigid=5,verbose=False, plot=False, zshift=30.0)
-        self.assertTrue(rmsd[0]> 3.0)
-        self.assertTrue(rmsd[-1]< 1.0)
+        self.assertGreater(rmsd[0], 3.0)
+        self.assertLess(rmsd[-1], 1.0)
 
     def test_proj_match(self):
         angular_dist = 20
 
         ref = PDB( join(get_tests_data(), "ref.pdb"))
+        ref.center()
         # target = PDB( join(get_tests_data(), "target.pdb"))
 
         sim = AFMSimulator(size=40, vsize=7.0, beta=1.0, sigma=4.2, cutoff=20)
         library = sim.get_projection_library(pdb=ref,  angular_dist=angular_dist, verbose=False)
+        ref.rotate([200,-20,-30])
+        zshift = 30
         pexp = sim.pdb2afm(ref)
+
 
         fit = AFMFitting(pdb=ref, img=pexp, simulator=sim)
         angles, shifts, mse = fit.projection_matching(image_library=library, angular_dist=angular_dist, max_shift_search=5,
-                                verbose=False, plot = False)
+                                verbose=False, plot = True)
         min_angle = [get_angular_distance(angles[np.argsort(mse)][i], np.zeros(3)) for i in range(len(mse))]
         self.assertEqual(0, np.argmin(min_angle))
 
@@ -122,8 +126,8 @@ class TestFitting(unittest.TestCase):
                                                                near_cutoff=[-1, 20, 10], n_points=[10, 5, 3],
                                                                plot=False, verbose=False, zshift_range=[10, 5, 2],
                                                                zshift_points=[5, 5, 5])
-        self.assertTrue(rmsd[0]> 3.0)
-        self.assertTrue(rmsd[-1]< 1.0)
+        self.assertGreater(rmsd[0], 3.0)
+        self.assertLess(rmsd[-1], 1.0)
 
 
 if __name__ == '__main__':
