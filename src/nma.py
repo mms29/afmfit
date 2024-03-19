@@ -7,12 +7,13 @@ from numba import njit
 from . import NOLB_PATH, VMD_PATH
 
 class NormalModesRTB:
-    def __init__(self,pdb, linear_modes, m_rigidT, m_rigidR, mapping, com):
+    def __init__(self,pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com):
         self.pdb = pdb
         self.linear_modes = linear_modes
         self.m_rigidT = m_rigidT
         self.m_rigidR = m_rigidR
         self.mapping = mapping
+        self.mapping_len = mapping_len
         self.com = com
         self.nmodes_total = self.linear_modes.shape[0]
         self.natoms = self.linear_modes.shape[1]
@@ -23,9 +24,9 @@ class NormalModesRTB:
     def read_NMA(cls, prefix):
         pdb = PDB(prefix+".pdb")
         m_rigidR, m_rigidT, com = cls._read_rtb(prefix + "_rtb.txt")
-        mapping = cls._read_mapping(prefix + "_rtb-mapping.txt")
+        mapping, mapping_len = cls._read_mapping(prefix + "_rtb-mapping.txt")
         linear_modes = cls._read_linear_modes(prefix + "_linear_modes.txt")
-        return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, com)
+        return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com)
 
     @classmethod
     def calculate_NMA(cls, pdb, tmpDir, nmodes, cutoff=8.0):
@@ -42,10 +43,10 @@ class NormalModesRTB:
 
         # Read outputs
         m_rigidR, m_rigidT, com = cls._read_rtb(tmpDir + "_rtb.txt")
-        mapping = cls._read_mapping(tmpDir + "_rtb-mapping.txt")
+        mapping, mapping_len = cls._read_mapping(tmpDir + "_rtb-mapping.txt")
         linear_modes = cls._read_linear_modes(tmpDir + "_linear_modes.txt")
 
-        return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, com)
+        return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com)
 
     def viewVMD(self, amp, tmpDir, npoints= 10):
         dcd = np.zeros((npoints*self.nmodes,self.natoms,3))
@@ -86,7 +87,7 @@ class NormalModesRTB:
             rot_m_rigidT[:, m] = np.dot(self.m_rigidT[:, m], Rt)
             rot_linear_modes[m] = np.dot(self.linear_modes[m], Rt)
 
-        return NormalModesRTB(rot_pdb, rot_linear_modes, rot_m_rigidT, rot_m_rigidR, self.mapping, rot_com)
+        return NormalModesRTB(rot_pdb, rot_linear_modes, rot_m_rigidT, rot_m_rigidR, self.mapping, self.mapping_len, rot_com)
 
     @classmethod
     def _read_rtb(cls, rtb_file):
@@ -123,17 +124,27 @@ class NormalModesRTB:
 
     @classmethod
     def _read_mapping(cls, mapping_file):
+        mapping_len = []
         with open(mapping_file, "r") as f:
             mapping = []
             for line in f:
-                mapping.append(np.array(line.split(), dtype=int)[2:])
-        return mapping
+                res = np.array(line.split(), dtype=int)[2:]
+                mapping_len.append(len(res))
+                mapping.append(res)
+        mapping_len = np.array(mapping_len)
+        maxlen = mapping_len.max()
+        nres = mapping_len.shape[0]
+        mapping_arr = np.zeros((nres, maxlen), dtype=int)
+        for caId in range(nres):
+            mapping_arr[caId, :mapping_len[caId]] = mapping[caId]
+
+        return mapping_arr, mapping_len
 
     def applySpiralTransformation(self, eta, pdb):
         transformed_pdb = pdb.copy()
         new_coords = applySpiralTransformation_njit(eta, transformed_pdb.coords,
             nmodes= self.nmodes, nmodes_total= self.nmodes_total, nrtb= self.nrtb, linear_modes= self.linear_modes,
-            com=self.com, m_rigidR=self.m_rigidR, m_rigidT= self.m_rigidT, mapping= self.mapping)
+            com=self.com, m_rigidR=self.m_rigidR, m_rigidT= self.m_rigidT, mapping= self.mapping, mapping_len = self.mapping_len)
         transformed_pdb.coords = new_coords
         return transformed_pdb
 
@@ -172,14 +183,14 @@ def _fromAxisAngle(rkAxis, fRadians):
 
 @njit
 def applySpiralTransformation_njit(eta, oldPositions,
-            nmodes, nmodes_total, nrtb, linear_modes, com, m_rigidR, m_rigidT, mapping):
+            nmodes, nmodes_total, nrtb, linear_modes, com, m_rigidR, m_rigidT, mapping,mapping_len):
     if len(eta) != nmodes_total:
         raise RuntimeError("Invalid number of normal mode amplitudes")
 
     translate_modes = 3
     EPSILON = 1e-11
     natoms = len(oldPositions)
-    newPositions = np.zeros(oldPositions.shape)
+    newPositions = np.zeros(oldPositions.shape, dtype=np.float32)
     oldVec = com.copy()
     oldPos = oldPositions.copy()
 
@@ -214,7 +225,7 @@ def applySpiralTransformation_njit(eta, oldPositions,
             # if False:
             # if mode <=translate_modes:
             if (np.fabs(alpha / amp) < EPSILON):
-                for atomId in mapping[caId]:
+                for atomId in mapping[caId, :mapping_len[caId]]:
                     newPositions[atomId] = oldPos[atomId] + T
                     oldVec[caId] = oldVec[caId] + T
             else:
@@ -241,7 +252,7 @@ def applySpiralTransformation_njit(eta, oldPositions,
                 oldVec[caId] = np.dot(curMat, (oldVec[caId] - X)) + X + Tcol  # COM position
 
                 # Apply Eq. (17), for each residue (RTB group)
-                for atomId in mapping[caId]:
+                for atomId in mapping[caId, :mapping_len[caId]]:
                     rotCoord = np.dot(curMat, (oldPos[atomId] - X)) + X
                     rotCoord += Tcol
                     newPositions[atomId] = rotCoord

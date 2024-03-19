@@ -3,6 +3,7 @@ import os
 import copy
 from Bio.SVDSuperimposer import SVDSuperimposer
 from src.utils import generate_euler_matrix_deg
+import mrcfile
 class PDB:
 
     @classmethod
@@ -76,9 +77,9 @@ class PDB:
         self.chainName = np.array(chainName, dtype='<U1')
         self.resNum = np.array(resNum).astype(int)
         self.insertion = np.array(insertion, dtype='<U1')
-        self.coords = np.array(coords).astype(float)
-        self.occ = np.array(occ).astype(float)
-        self.temp = np.array(temp).astype(float)
+        self.coords = np.array(coords).astype(np.float32)
+        self.occ = np.array(occ).astype(np.float32)
+        self.temp = np.array(temp).astype(np.float32)
         self.chainID = np.array(chainID, dtype='<U4')
         self.elemName = np.array(elemName, dtype='<U2')
 
@@ -457,4 +458,26 @@ def numpyArr2dcd(arr, filename, start_frame=1, len_frame=1, time_step=1.0, title
                 f.write(int.to_bytes(BYTESIZE * natom, BYTESIZE, "little"))
                 f.write(np.float32(arr[i, :, j]).tobytes())
                 f.write(int.to_bytes(BYTESIZE * natom, BYTESIZE, "little"))
+    print("\t Done \n")
+
+
+def save_mrc(data, file, voxel_size=1, origin=None):
+    """
+    Save volume data to an mrc file. The origin of the grid will be (0,0,0)
+    :param data: volume data to save (array N*N*N)
+    :param file: the mrc file name for the output
+    :param voxel_size: voxel size
+    """
+    print("> Saving mrc file ...")
+    data = data.astype('float32')
+    with mrcfile.new(file, overwrite=True) as mrc:
+        mrc.set_data(data.T)
+        mrc.voxel_size = voxel_size
+        if origin is None:
+            origin = -voxel_size*(data.shape[0])/2   #*0.0 #EDIT
+        mrc.header['origin']['x'] = origin
+        mrc.header['origin']['y'] = origin
+        mrc.header['origin']['z'] = origin
+        mrc.update_header_from_data()
+        mrc.update_header_stats()
     print("\t Done \n")
