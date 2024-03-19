@@ -5,9 +5,12 @@ from os.path import join
 import numpy as np
 from src.nma import NormalModesRTB
 from src.simulator import AFMSimulator
-from src.fitting import AFMFitting, rot_trans_match, ProjMatch, trans_match
+from src.fitting import Fitter, ProjMatch, NMAFit
 from src.viewer import viewAFM
 import polarTransform
+import multiprocessing
+
+N_CPU_TOTAL = multiprocessing.cpu_count()//2
 
 class TestIO(unittest.TestCase):
 
@@ -74,28 +77,22 @@ class TestSimulator(unittest.TestCase):
         self.assertLess(get_cc(img2, img1_gt), get_cc(img1, img1_gt))
         self.assertLess(get_cc(img1, img2_gt), get_cc(img2, img2_gt))
 
-    def test_image_library(self):
-        ref = PDB( join(get_tests_data(), "ref.pdb"))
-
-        sim = AFMSimulator(size=40, vsize=7.0, beta=1.0, sigma=4.2, cutoff=20)
-        library = sim.get_projection_library(pdb=ref,  angular_dist=20, verbose=False)
-        self.assertEqual(78, library.nimg)
 
 class TestFitting(unittest.TestCase):
 
     def test_nma_fitting(self):
         nma = NormalModesRTB.read_NMA(join(get_tests_data(), "nma"))
-        ref = PDB( join(get_tests_data(), "ref.pdb"))
         target = PDB( join(get_tests_data(), "target.pdb"))
 
         zshift = 30.0
         sim = AFMSimulator(size=40, vsize=7.0, beta=1.0, sigma=4.2, cutoff=20)
         pexp = sim.pdb2afm(target, zshift=zshift)
 
-        fit = AFMFitting(pdb=ref, img=pexp, simulator=sim, nma=nma, target_pdb=target)
-        fit.fit_nma(n_iter=5, gamma=10, gamma_rigid=5,verbose=False, plot=False, zshift=30.0)
-        self.assertGreater(fit.rmsd[0], 3.0)
-        self.assertLess(fit.rmsd[-1], 1.0)
+        nmafit = NMAFit()
+        nmafit.fit(img=pexp,nma=nma, simulator=sim,target_pdb=target, zshift=zshift,
+                   n_iter=5, gamma=10, gamma_rigid=5,verbose=False, plot=False)
+        self.assertGreater(nmafit.rmsd[0], 3.0)
+        self.assertLess(nmafit.rmsd[-1], 1.0)
 
     def test_trans_match(self):
         ref = PDB(join(get_tests_data(), "ref.pdb"))
@@ -109,7 +106,7 @@ class TestFitting(unittest.TestCase):
         img2 = sim.pdb2afm(rot, zshift=30.0)
         viewAFM([img1, img2])
 
-        shiftx, shifty, corr = trans_match(img1, img2)
+        shiftx, shifty, corr = ProjMatch.trans_match(img1, img2)
         mse = np.sqrt(np.sum(np.square(img1)) + np.sum(np.square(img2)) - 2 * corr)
         rot2 = ref.copy()
         rot2.translate(np.array([shiftx, shifty, 0]) * sim.vsize)
@@ -118,35 +115,6 @@ class TestFitting(unittest.TestCase):
         # assert that the MSE calculated by trans_match is the same than the MSE obtained by applying the shifts to
         #  the structure and projecting to image again
         self.assertAlmostEqual(np.linalg.norm(img3 - img2) , mse, 5)
-
-
-    def test_rotational_matching(self):
-        ref = PDB(join(get_tests_data(), "ref.pdb"))
-        ref.center()
-        angle_gt = np.array([200, 0, 0])
-        shift_gt = np.array([-20, 30, 0])
-        rot = ref.copy()
-        rot.rotate(angle_gt)
-        rot.translate(shift_gt)
-
-        sim = AFMSimulator(size=40, vsize=7.0, beta=1.0, sigma=4.2, cutoff=20)
-        pexp = sim.pdb2afm(rot)
-        psim = sim.pdb2afm(ref)
-        pexp2 = pexp.copy()
-        pexp2[:7, :7] = 70
-
-        angular_dist = 5
-        angleSize = 2 ** 7
-
-        angle, shift, mse, = rot_trans_match( psim,pexp,   angleSize)
-        angle2, shift2, mse2 = rot_trans_match(psim,pexp2,  angleSize)
-
-        self.assertLess(np.abs(angle -angle_gt[0])  , angular_dist )
-        self.assertLess(np.abs(angle2 -angle_gt[0]) ,  angular_dist )
-        self.assertLess(np.abs(shift[0] - shift_gt[0]/sim.vsize) , 1.0 )
-        self.assertLess(np.abs(shift2[0] -shift_gt[0]/sim.vsize),  1.0 )
-        self.assertLess(np.abs(shift[1] - shift_gt[1]/sim.vsize) , 1.0 )
-        self.assertLess(np.abs(shift2[1] -shift_gt[1]/sim.vsize),  1.0 )
 
     def test_proj_match(self):
         angular_dist = 10
@@ -161,13 +129,13 @@ class TestFitting(unittest.TestCase):
         rot.translate(shift_gt)
 
         sim = AFMSimulator(size=40, vsize=7.0, beta=1.0, sigma=4.2, cutoff=20)
-        library = sim.get_projection_library_full_pool(n_cpu=8, pdb=ref,  angular_dist=angular_dist, verbose=False, init_zshift=30.0,
+        library = sim.project_library(n_cpu=N_CPU_TOTAL, pdb=ref,  angular_dist=angular_dist, verbose=True, init_zshift=30.0,
                                              zshift_range=np.linspace(-15,15,10))
         pexp = sim.pdb2afm(rot, zshift_gt)
 
 
         projMatch = ProjMatch(img=pexp, simulator=sim, pdb=ref)
-        projMatch.run(library=library, verbose=False)
+        projMatch.run(library=library, verbose=True)
         # projMatch.show()
 
         self.assertLess(np.abs(projMatch.best_shift[0] - shift_gt[0]) , sim.vsize)
@@ -177,30 +145,85 @@ class TestFitting(unittest.TestCase):
         adist = get_angular_distance(projMatch.best_angle, angle_gt)
         self.assertLess(adist, angular_dist)
 
-    def test_flexile_rigid_fitting(self):
-        nma = NormalModesRTB.read_NMA(join(get_tests_data(), "nma"))
+
+    def test_fitting_rigid(self):
+        angular_dist = 5
+
         ref = PDB( join(get_tests_data(), "ref.pdb"))
-        target = PDB( join(get_tests_data(), "target.pdb"))
-        angle_gt = np.array([200,-20,0])
-        shift_gt = np.array([-15,10,0])
-        zshift_gt = 41.6
-        target.rotate(angle_gt)
-        target.translate(shift_gt)
-
+        ref.center()
+        nimg = 10
+        angle_gt = np.zeros((nimg,3))
+        shift_gt = np.zeros((nimg,3))
+        angle_gt[:,0] = np.linspace(0,360, nimg)
+        angle_gt[:,1] = np.linspace(-20,20, nimg)
+        shift_gt[:,0] = np.linspace(-20,20, nimg)
+        shift_gt[:,1] = np.linspace(-20,20, nimg)
+        shift_gt[:,2] = 41.6
         sim = AFMSimulator(size=40, vsize=7.0, beta=1.0, sigma=4.2, cutoff=20)
-        pexp = sim.pdb2afm(target, zshift=zshift_gt)
-        pexp[:7, :7] = 70
+        zshift_range = np.linspace(-20,20,10)
 
-        fit = AFMFitting(pdb=ref, img=pexp, simulator=sim, nma=nma, target_pdb=target)
-        fit.fit_nma_rotations(n_iter=5, gamma=6, gamma_rigid=3,angular_dist=[20, 10, 5],
-                near_angle_cutoff=[-1, 20, 10], n_views=[10, 5, 3], plot=False, verbose=False, zshift_range=[20, 10, 5],
-                                                               zshift_points=[5, 5, 5])
-        self.assertGreater(fit.rmsd[0], 3.0)
-        self.assertLess(fit.best_rmsd, 2.1)
-        self.assertLess(np.abs(fit.best_shift[0] - shift_gt[0]) , sim.vsize)
-        self.assertLess(np.abs(fit.best_shift[1] - shift_gt[1]) , sim.vsize)
-        self.assertLess(np.abs(fit.best_shift[2] - zshift_gt) , 1.0)
-        self.assertLess(get_angular_distance(fit.best_angle, angle_gt), 10.0)
+        imgs = []
+        targets = []
+        for i in range( nimg):
+            rot = ref.copy()
+            rot.rotate(angle_gt[i])
+            rot.translate(shift_gt[i])
+            targets.append(rot)
+            imgs.append(sim.pdb2afm(rot, 0.0))
+
+        fitter = Fitter(pdb=ref, imgs=imgs, simulator=sim, target_pdbs=targets)
+        fitter.fit_rigid( n_cpu=N_CPU_TOTAL, angular_dist=angular_dist, verbose=True, zshift_range=zshift_range)
+
+        for i in range(nimg):
+            adist = get_angular_distance(fitter.rigid_angles[i,0], angle_gt[i])
+            sdist = np.linalg.norm(fitter.rigid_shifts[i,0]-shift_gt[i])
+            print(adist)
+            print(sdist)
+            self.assertLess(adist, 21.0)
+            self.assertLess(sdist, 6.0)
+
+    def test_fitting_flexible(self):
+        nma = NormalModesRTB.read_NMA(join(get_tests_data(), "nma"))
+        nimg = 10
+        sim = AFMSimulator(size=40, vsize=7.0, beta=1.0, sigma=3.2, cutoff=40)
+        zshift_range = np.linspace(-20,20,10)
+
+        angle_gt = np.zeros((nimg,3))
+        shift_gt = np.zeros((nimg,3))
+        eta_gt = np.zeros((nimg, nma.nmodes_total))
+        angle_gt[:,0] = np.linspace(0,360, nimg)
+        angle_gt[:,1] = np.linspace(-20,20, nimg)
+        shift_gt[:,0] = np.linspace(-20,20, nimg)
+        shift_gt[:,1] = np.linspace(-20,20, nimg)
+        shift_gt[:,2] = 41.6
+        eta_gt[:, 6] = np.linspace(-1000,-500, nimg)
+        eta_gt[:, 7] = np.linspace(500,1000, nimg)
+
+        imgs = []
+        targets = []
+        for i in range( nimg):
+            tnma = nma.transform(angle_gt[i], shift_gt[i])
+            target = tnma.applySpiralTransformation(eta_gt[i], tnma.pdb)
+            targets.append(target)
+            imgs.append(sim.pdb2afm(target, 0.0))
+
+        # viewAFM(imgs, interactive=True)
+
+        fitter = Fitter(pdb=nma.pdb, imgs=imgs, simulator=sim, target_pdbs=targets)
+        # fitter.fit_rigid(n_cpu=8, angular_dist=10,
+        #                 verbose=True, zshift_range=zshift_range, n_best_views=3)
+        fitter.fit_flexible( n_cpu=N_CPU_TOTAL, nma=nma, angular_dist=10, verbose=True, zshift_range=zshift_range, n_best_views=3,
+                     n_iter=10, gamma=10, gamma_rigid=3, plot=False)
+
+        for i in range(nimg):
+            self.assertLess(3.0, fitter.flexible_rmsds[i,0])
+            self.assertLess(fitter.flexible_rmsds[i].min(), 2.5)
+
+            adist = get_angular_distance(fitter.flexible_angles[i], angle_gt[i])
+            sdist = np.linalg.norm(fitter.flexible_shifts[i]-shift_gt[i])
+            self.assertLess(adist, 11.0)
+            self.assertLess(sdist, 3.0)
+
 
 
 if __name__ == '__main__':

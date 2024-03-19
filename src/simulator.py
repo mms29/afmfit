@@ -38,173 +38,42 @@ class AFMSimulator:
             zshift=zshift, vsize=self.vsize, beta=self.beta, r=r, sigma=self.sigma)
         return grad
 
-    def get_projection_library(self, pdb, init_zshift = None,  zshift_range=None, angular_dist=10,
-                           verbose=True, near_angle=None, near_angle_cutoff=30):
-        ZERO_CUTOFF =5.0 # Angstrom
-
-        # Compute directions views
-        if near_angle is not None:  angles = get_sphere_near(angular_dist, near_angle, near_angle_cutoff)
-        else:                       angles = get_sphere(angular_dist)
-
-        # Initiate arrays
-        n_angles = len(angles)
-        if zshift_range is None:
-            n_zshift = 1
-            zshift_range = [0.0]
-        else:
-            n_zshift = len(zshift_range)
-        n_img = n_angles * n_zshift
-        image_library = np.zeros((n_img,  self.size, self.size))
-
-        z_shifts = np.zeros(n_img)
-        all_angles = np.zeros((n_img, 3))
-
-        time_rot = 0.0
-        time_proj = 0.0
-        time_zsh = 0.0
-
-        # Loop over all viewing directions
-        dtime = time.time()
-        for i in range(n_angles):
-            if verbose:
-                if int((i + 1) % (n_angles / 10)) == 0:
-                    print("%i %%" % int(100 * (i + 1) / n_angles))
-
-            # Rotate coordinates
-            dt = time.time()
-            rot_pdb = pdb.copy()
-            rot_pdb.rotate(angles[i])
-            if init_zshift is None:
-                z_shift = -rot_pdb.coords[:, 2].min()
-            else:
-                z_shift = init_zshift
-            time_rot += time.time() - dt
-
-            # Simulate images
-            dt = time.time()
-            img = self.pdb2afm(rot_pdb, zshift=z_shift)
-            time_proj += time.time() - dt
-
-            # Simulate images in Z direction
-            dt = time.time()
-            for z in range(n_zshift):
-                img_zshift = img.copy()
-                img_zshift[img_zshift >= ZERO_CUTOFF] += zshift_range[z]
-                if zshift_range[z] < 0:
-                    img_zshift[img_zshift < 0.0] = 0.0
-                image_library[i * n_zshift + z] = img_zshift
-                z_shifts[i * n_zshift + z] = zshift_range[z] + z_shift
-                all_angles[i * n_zshift + z] = angles[i]
-            time_zsh += time.time() - dt
-
-        shifts = np.zeros((n_img, 3))
-        shifts[:, 2] = z_shifts
-
-        if verbose:
-            print("\t TIME_TOTAL => 100 %% ;  %.4f s" % (time.time() - dtime))
-            print("\t  rot ;  %.4f s" % (time_rot))
-            print("\t  proj ;  %.4f s" % (time_proj))
-            print("\t  zsh ;  %.4f s" % (time_zsh))
-
-        return ImageSet(image_library, angles = all_angles, shifts=shifts)
-
-    def get_projection_library_full(self, pdb, angular_dist, init_zshift = None, verbose=True, zshift_range=None):
+    def project_library(self, n_cpu, pdb, angular_dist, init_zshift = None, verbose=True, zshift_range=None):
         ZERO_CUTOFF = 5.0  # Angstrom
 
         # Compute directions views
         angles = get_sphere_full(angular_dist)
 
-        # Initiate arrays
+        #inputs
         n_angles, _ = angles.shape
         n_zshifts = len(zshift_range)
         n_imgs = n_angles*n_zshifts
-        image_library = np.zeros((n_imgs,  self.size, self.size), dtype=np.float32)
-        z_shifts = np.zeros(n_imgs)
+
+        # Allocate Arrays
+        imageLibrarySharedArray = RawArray("f", n_imgs*self.size*self.size)
+        zshiftRawArray = RawArray("d", n_imgs)
         angles_z = np.zeros((n_imgs,3))
-
-        # Loop over all viewing directions
-        dtime = time.time()
-        for i in tqdm.tqdm(range(n_angles)):
-            # Rotate coordinates
-            rot_pdb = pdb.copy()
-            rot_pdb.rotate(angles[i])
-
-            # set zshift
-            if init_zshift is None: z_shift = -rot_pdb.coords[:, 2].min()
-            else: z_shift = init_zshift
-
-            # Simulate images
-            img = self.pdb2afm(rot_pdb, zshift = z_shift)
-
-            for z in range(n_zshifts):
-                img_zshift = img.copy()
-                img_zshift[img_zshift >= ZERO_CUTOFF] += zshift_range[z]
-                if zshift_range[z] < 0:
-                    img_zshift[img_zshift < 0.0] = 0.0
-
-                image_library[i*n_zshifts + z] = img_zshift
-                z_shifts[i*n_zshifts + z] = z_shift + zshift_range[z]
-                angles_z[i*n_zshifts + z] = angles[i]
-
-        if verbose:
-            print("\t TIME_TOTAL => 100 %% ;  %.4f s" % (time.time() - dtime))
-
-        return ImageLibrary(image_library, angles = angles_z, z_shifts=z_shifts)
-
-    def get_projection_library_full_pool(self, n_cpu, pdb, angular_dist, init_zshift = None, verbose=True, zshift_range=None):
-        ZERO_CUTOFF = 5.0  # Angstrom
-
-        # Compute directions views
-        angles = get_sphere_full(angular_dist)
-
-        # Initiate arrays
-        n_angles, _ = angles.shape
-        n_zshifts = len(zshift_range)
-        n_imgs = n_angles*n_zshifts
-        z_shifts = np.zeros(n_imgs)
-        angles_z = np.zeros((n_imgs,3))
-
-
         workdata=[]
 
-        # Loop over all viewing directions
-        dtime = time.time()
-        for i in tqdm.tqdm(range(n_angles), desc="Rotate Model"):
-            # Rotate coordinates
-            rot_pdb = pdb.copy()
-            rot_pdb.rotate(angles[i])
+        for i in range(n_angles):
+            workdata.append([i , angles[i]])
 
-            # set zshift
-            if init_zshift is None: z_shift = -rot_pdb.coords[:, 2].min()
-            else: z_shift = init_zshift
-            for z in range(n_zshifts):
-                z_shifts[i*n_zshifts + z] = z_shift + zshift_range[z]
-                angles_z[i*n_zshifts + z] = angles[i]
-
-            workdata.append([
-            i ,
-            rot_pdb.coords,
-            z_shift ,
-            ])
-
-        imageLibrarySharedArray = RawArray("f", n_imgs*self.size*self.size)
-        image_library = frombuffer(imageLibrarySharedArray, dtype=np.float32,
-                                   count=len(imageLibrarySharedArray)).reshape(n_imgs, self.size, self.size)
-
-
-        p = Pool(n_cpu, initializer=init_pool_processes, initargs=(imageLibrarySharedArray,n_imgs,
-                n_zshifts, ZERO_CUTOFF, zshift_range, self, pdb))
-        for _ in tqdm.tqdm(p.imap_unordered(run_pool_process, workdata), total=len(workdata), desc="Project Library"):
+        # Run multiprocess
+        p = Pool(n_cpu, initializer=self.init_projLibrary_processes, initargs=(imageLibrarySharedArray, zshiftRawArray, n_imgs,
+                n_zshifts, ZERO_CUTOFF, zshift_range, self, pdb, init_zshift))
+        for _ in tqdm.tqdm(p.imap_unordered(self.run_projLibrary_process, workdata), total=len(workdata), desc="Project Library"
+                           , disable=not verbose):
             pass
 
         del workdata
 
-        if verbose:
-            print("\t TIME_TOTAL => 100 %% ;  %.4f s" % (time.time() - dtime))
+        for i in range(n_angles):
+            for z in range(n_zshifts):
+                angles_z[i*n_zshifts + z] = angles[i]
+        z_shifts = frombuffer(zshiftRawArray, dtype=np.float64, count=len(zshiftRawArray))
 
-        return ImageLibrary(image_library, angles = angles_z, z_shifts=z_shifts)
-
-
+        return ImageLibrary(imageLibrarySharedArray, nimgs = n_imgs, size= self.size, vsize=self.vsize,
+                            angles = angles_z, z_shifts=z_shifts)
 
     def afmize(self, pdb, probe_r, probe_a, noise, prefix):
         pdb.write_pdb(prefix + ".pdb")
@@ -231,43 +100,55 @@ class AFMSimulator:
 
         return np.loadtxt(prefix + ".tsv").T
 
-def run_pool_process(workdata):
-    rank =  workdata[0]
-    coords = workdata[1]
-    zshift = workdata[2]
+    def init_projLibrary_processes(self, imageLibrarySharedArray, zshiftRawArray, n_imgs,
+                n_zshifts, zero_cutoff, zshift_range, simulator, pdb,init_zshift):
+        global image_library_global
+        global z_shifts_global
+        global n_zshifts_global
+        global zero_cutoff_global
+        global zshift_range_global
+        global simulator_global
+        global pdb_global
+        global init_zshift_global
 
-    image_library = frombuffer(imageLibrarySharedArrayProcess, dtype=np.float32,
-                               count=len(imageLibrarySharedArrayProcess)).reshape(n_imgs_global, simulator_global.size,
-                                                                                  simulator_global.size)
-    # Simulate images
-    rot = pdb_global.copy()
-    rot.coords = coords
+        image_library_global = frombuffer(imageLibrarySharedArray, dtype=np.float32,
+                                   count=len(imageLibrarySharedArray)).reshape(n_imgs,
+                                                                                      simulator.size,
+                                                                                      simulator.size)
+        z_shifts_global = frombuffer(zshiftRawArray, dtype=np.float64,
+                                   count=len(zshiftRawArray))
+        n_zshifts_global = n_zshifts
+        zero_cutoff_global = zero_cutoff
+        zshift_range_global = zshift_range
+        simulator_global = simulator
+        pdb_global = pdb
+        init_zshift_global = init_zshift
 
-    max_zshift = np.max(zshift_range_global)
-    img = simulator_global.pdb2afm(rot, zshift=zshift +max_zshift)
+    def run_projLibrary_process(self, workdata):
+        rank =  workdata[0]
+        angles = workdata[1]
 
-    for z in range(n_zshifts_global):
-        img_zshift = img.copy()
-        img_zshift[img_zshift >= zero_cutoff_global] += zshift_range_global[z]-max_zshift
-        img_zshift[img_zshift < 0.0] = 0.0
+        rot = pdb_global.copy()
+        rot.rotate(angles)
 
-        image_library[rank*n_zshifts_global + z] = img_zshift
-def init_pool_processes(imageLibrarySharedArray, n_imgs,
-            n_zshifts, zero_cutoff, zshift_range, simulator, pdb):
-    global imageLibrarySharedArrayProcess
-    global n_imgs_global
-    global n_zshifts_global
-    global zero_cutoff_global
-    global zshift_range_global
-    global simulator_global
-    global pdb_global
-    imageLibrarySharedArrayProcess = imageLibrarySharedArray
-    n_imgs_global = n_imgs
-    n_zshifts_global = n_zshifts
-    zero_cutoff_global = zero_cutoff
-    zshift_range_global = zshift_range
-    simulator_global = simulator
-    pdb_global = pdb
+        # set zshift
+        if init_zshift_global is None:
+            z_shift = -rot.coords[:, 2].min()
+        else:
+            z_shift = init_zshift_global
+
+        max_zshift = np.max(zshift_range_global)
+        img = simulator_global.pdb2afm(rot, zshift=z_shift +max_zshift)
+
+        for z in range(n_zshifts_global):
+            img_zshift = img.copy()
+            img_zshift[img_zshift >= zero_cutoff_global] += zshift_range_global[z]-max_zshift
+            img_zshift[img_zshift < 0.0] = 0.0
+
+            z_shifts_global[rank * n_zshifts_global + z] = z_shift + zshift_range_global[z]
+
+            image_library_global[rank*n_zshifts_global + z] = img_zshift
+
 
 @njit
 def calculate_norm_njit(imgs):
@@ -279,17 +160,26 @@ def calculate_norm_njit(imgs):
 
 class ImageLibrary:
 
-    def __init__(self, imgs, angles=None, z_shifts=None):
-        self.imgs = imgs
-        self.nimgs = imgs.shape[0]
+    def __init__(self, imgRawArray, nimgs, size, vsize, angles=None, z_shifts=None):
+        self.imgRawArray = imgRawArray
+        self.nimgs = nimgs
+        self.size = size
+        self.vsize = vsize
         self.angles = angles
         self.z_shifts = z_shifts
-        self.norm2 = self.calculate_norm(imgs)
+        self.norm2 = self.calculate_norm(self.get_imgs())
+
+    def get_imgs(self):
+        return frombuffer(self.imgRawArray, dtype=np.float32,
+                               count=len(self.imgRawArray)).reshape(self.nimgs, self.size,self.size)
+
+    def get_img(self, index):
+        return self.get_imgs()[index]
 
     def calculate_norm(self, imgs):
         return calculate_norm_njit(imgs)
     def show(self):
-        viewAFM(self.imgs, interactive=True)
+        viewAFM(self.get_imgs(), interactive=True)
 
     def show_sphere(self):
         points = get_points_from_angles(self.angles)

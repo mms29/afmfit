@@ -8,7 +8,6 @@ class PDB:
 
     @classmethod
     def read_coords(cls, pdb_file):
-        print("> Reading pdb file %s ..." % pdb_file)
         coords = []
         with open(pdb_file, "r") as f:
             for line in f:
@@ -41,7 +40,6 @@ class PDB:
         temp = []
         chainID = []
         elemName = []
-        print("> Reading pdb file %s ..." % pdb_file)
         with open(pdb_file, "r") as f:
             for line in f:
                 spl = line.split()
@@ -86,14 +84,12 @@ class PDB:
         if self.n_atoms == 0:
             raise RuntimeError("Could not read PDB file : PDB file is empty")
 
-        print("\t Done \n")
 
     def write_pdb(self, file):
         """
         Write to PDB Format
         :param file: pdb file path
         """
-        print("> Writing pdb file %s ..." % file)
         with open(file, "w") as file:
             past_chainName = self.chainName[0]
             past_chainID = self.chainID[0]
@@ -128,7 +124,6 @@ class PDB:
                     atom, atomNum, atomName, resAlter, resName, chainName, resNum,
                     insertion, coordx, coordy, coordz, occ, temp, chainID, elemName))
             file.write("END\n")
-        print("\t Done \n")
 
     def matchPDBatoms(self, reference_pdb, ca_only=False, matchingType=None):
         """
@@ -235,14 +230,14 @@ class PDB:
         :param angles: list of 3 Euler angles
         """
         R= generate_euler_matrix_deg(angles)
-        self.coords = np.dot(R, self.coords.T).T
+        self.coords = np.dot( np.array(R,np.float32), self.coords.T).T
 
     def translate(self, shift):
         """
         Translate the coordinates
         :param shift: list of 3 shifts
         """
-        self.coords += shift
+        self.coords += np.array(shift,np.float32)
 
     def get_radius(self):
         radius = {

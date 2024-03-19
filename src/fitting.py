@@ -12,6 +12,8 @@ import pickle
 from src.viewer import FittingPlotter, viewAFMfitting
 from warnings import warn
 import tqdm
+from multiprocessing.sharedctypes import RawArray
+from numpy import frombuffer
 
 class ProjMatch:
     def __init__(self, img, simulator, pdb):
@@ -38,9 +40,9 @@ class ProjMatch:
         mse =    np.zeros((nimgs))
         shifts = np.zeros((nimgs, 3))
 
-        for i in tqdm.tqdm(range(nimgs), desc="Projection Matching"):
+        for i in tqdm.tqdm(range(nimgs), desc="Projection Matching", disable=not verbose):
             # Rotational Translational XY matching
-            _x, _y, _c = trans_match(library.imgs[i],  img_exp)
+            _x, _y, _c = self.trans_match(library.get_img(i),  img_exp)
 
             mse[i] = library.norm2[i] + img_exp_norm -2*_c
             shifts[i,0] =_x *  self.vsize
@@ -105,6 +107,19 @@ class ProjMatch:
         plt.colorbar(im)
         plt.show()
 
+    @classmethod
+    def trans_match(cls, img1, img2):
+        size = img1.shape[0]
+        img1_ft = np.fft.fftn(img1)
+        img2_ft = np.fft.fftn(img2)
+        corr  = np.fft.ifftn(img1_ft * np.conjugate(img2_ft)).real
+        shiftx = np.argmax(corr.sum(axis=1))
+        shifty = np.argmax(corr.sum(axis=0))
+        if shiftx>= size//2:
+            shiftx-= size
+        if shifty>= size//2:
+            shifty-= size
+        return -shiftx, -shifty, np.max(corr)
 
 class AFMFittingSet:
     def __init__(self, pdb, imglib, simulator, nma, target_pdb=None):
@@ -171,51 +186,6 @@ class AFMFittingSet:
 
         self.pool_handle_rigid(n_cpu, work_data)
 
-    @classmethod
-    def from_fitted_files(cls, files):
-        n_files = len(files)
-        imgs =        []
-        fitted_imgs = []
-        coords =      []
-        eta =         []
-        angle =       []
-        shift =       []
-        mse =         []
-        rmsd=         []
-        dcd=          []
-        for i in range(n_files):
-            fit =  AFMFitting.load(files[i])
-            imgs.append(fit.img)
-            fitted_imgs.append(fit.best_fitted_img)
-            coords.append(fit.best_coords)
-            eta.append(fit.best_eta)
-            angle.append(fit.best_angle)
-            shift.append(fit.best_shift)
-            mse.append(fit.mse)
-            rmsd.append(fit.rmsd)
-            dcd.append(fit.dcd)
-            pdb = fit.pdb
-            simulator = fit.simulator
-            nma = fit.nma
-            target_pdb = fit.target_pdb
-            del fit
-
-        print(fitted_imgs)
-        print(len(fitted_imgs))
-
-        imglib = ImageLibrary(np.array(imgs))
-        fitSet = AFMFittingSet(pdb, imglib, simulator, nma, target_pdb)
-
-        fitSet.fitlib     = ImageLibrary(np.array(fitted_imgs))
-        fitSet.best_coords= np.array(coords)
-        fitSet.best_eta   = np.array(eta)
-        fitSet.best_angle = np.array(angle)
-        fitSet.best_shift = np.array(shift)
-        fitSet.mse        = np.array(mse)
-        fitSet.rmsd       = np.array(rmsd)
-        fitSet.dcd        = np.array(dcd)
-        return fitSet
-
     def show(self):
         viewAFMfitting(self)
 
@@ -253,38 +223,164 @@ class AFMFittingSet:
             pass
         return p
 
-
-class AFMFitting:
-    def __init__(self, pdb, img, simulator, nma, target_pdb=None):
-        self.pdb = pdb
-        self.img = img
-        self.simulator = simulator
-        self.nma = nma
-        self.plotter = FittingPlotter()
-        if target_pdb is None:
-            self.target_pdb = pdb
-        else:
-            self.target_pdb= target_pdb
-
-        # simulation monitoring
-        self.dcd = None
+class NMAFit:
+    def __init__(self):
+        self.best_mse = None
+        self.best_rmsd = None
         self.mse = None
         self.rmsd = None
-        self.eta = None
-        self.fitted_imgs = None
-        self.projMatch = None
-
-        # TODO
-        # self.best_projMatch = None
-        self.best_mse= None
-        self.best_rmsd = None
-        self.best_eta=None
-        self.best_fitted_img=None
-        self.best_coords = None
+        self.best_eta = None
+        self.best_fitted_img = None
+        self.best_coords  = None
         self.best_angle = None
         self.best_shift = None
 
-        # outs
+    def fit(self, img, nma, simulator, target_pdb=None, zshift=None,
+            n_iter=10, gamma=50, gamma_rigid=5, verbose=True, plot=False, q_init=None, init_plotter=None):
+        dtimetot = time.time()
+
+        # Inputs
+        pdb = nma.pdb
+        pexp = img
+        if target_pdb is None:
+            target_pdb = pdb
+        if zshift is None:
+            zshift=0.0
+
+        # define output arrays
+        dcd = np.zeros((n_iter+1, pdb.n_atoms, 3), dtype=np.float32)
+        mse = np.zeros(n_iter+1)
+        rmsd =np.zeros(n_iter+1)
+        eta = np.zeros((n_iter + 1, nma.nmodes_total))
+        fitted_imgs =np.zeros((n_iter+1, simulator.size, simulator.size), dtype=np.float32)
+        if q_init is not None:
+            eta[0] = q_init
+
+        # init state
+        fitted = nma.applySpiralTransformation(eta=eta[0], pdb=pdb)
+        psim = simulator.pdb2afm(fitted, zshift=zshift)
+        mse[0]=np.linalg.norm(psim - pexp)**2
+        rmsd[0]=fitted.getRMSD(target_pdb, align=True)
+        dcd[0] = fitted.coords
+        fitted_imgs[0] = psim
+
+        # Define regularization
+        regul = np.zeros( nma.nmodes_total)
+        regul[:6] = 1/(gamma_rigid**2)
+        regul[6:] = 1/(gamma**2)
+        linear_modes_line =  nma.linear_modes.reshape(nma.nmodes_total, nma.natoms * 3)
+        r_matrix = np.dot(linear_modes_line, linear_modes_line.T) * regul
+
+        if plot:
+            if init_plotter is not None:
+                plotter = init_plotter
+                plotter.update_imgs(psim, pexp)
+                plotter.draw()
+            else:
+                plotter = FittingPlotter()
+                plotter.start(psim, pexp, mse, rmsd, interactive=True)
+
+        for i in range(n_iter):
+            # Compute the gradient
+            dq = simulator.pdb2afm_grad(pdb=fitted,nma=nma, psim=psim, zshift=zshift)
+
+            # Compute the new NMA amplitudes
+            q_est = self.q_estimate(psim, pexp, dq,r_matrix=r_matrix, q0=eta[i])
+            eta[i + 1] = q_est + eta[i]
+
+            # Apply NMA amplitudes to the PDB
+            fitted = nma.applySpiralTransformation(eta=eta[i+1], pdb=pdb)
+
+            # Simulate the new image
+            psim = simulator.pdb2afm(fitted, zshift=zshift)
+
+            # Update outputs
+            dcd[i+1] = fitted.coords
+            mse[i+1] = np.linalg.norm(psim - pexp)**2
+            rmsd[i+1]= fitted.getRMSD(target_pdb, align=True)
+            fitted_imgs[i+1]= psim
+
+            # If the trajectory has converged, stop the iterations
+            norm = np.array([np.linalg.norm(eta[i+1]-eta[q]) for q in range(i)])
+            if any(norm<  1.0):
+                for q in range(i, n_iter):
+                    dcd[q + 1] = dcd[i+1]
+                    mse[q + 1] = mse[i+1]
+                    rmsd[q + 1] = rmsd[i+1]
+                    fitted_imgs[q + 1] = fitted_imgs[i+1]
+                break
+
+            if verbose:
+                print("Iter %i = %.2f ; %.2f" % (i, mse[i+1], rmsd[i+1]))
+                print(eta[i + 1])
+
+            if plot:
+                if init_plotter is not None:
+                    plotter.update_imgs(psim, pexp)
+                    plotter.draw()
+                else:
+                    plotter.update(psim, pexp, mse, rmsd)
+
+        # outputs
+        best_idx= np.argmin(mse)
+        self.best_mse = mse[best_idx]
+        self.best_rmsd= rmsd[best_idx]
+        self.mse = mse
+        self.rmsd= rmsd
+
+        self.best_eta= eta[best_idx]
+        self.best_fitted_img=fitted_imgs[best_idx]
+        self.best_coords = dcd[best_idx]
+
+        R, t = PDB.alignCoords(dcd[best_idx], pdb.coords)
+        self.best_angle= matrix2eulerAngles(R.T)
+        self.best_shift= t
+
+        if verbose:
+            print("\t TIME_TOTAL   => %.4f s" % (time.time() - dtimetot))
+
+    def q_estimate(self, psim, pexp, dq, r_matrix, q0, mask=None):
+        nmodes = dq.shape[0]
+        size = psim.shape[0]
+        dy = (psim - pexp)
+        if mask is not None:
+            dy*= mask
+            dq*= mask
+
+        dqt_line = dq.reshape(nmodes, size**2)
+        dy_line = dy.reshape(size**2).T
+        dqtdq = np.dot(dqt_line, dqt_line.T)
+
+        dq2_inv = np.linalg.inv(dqtdq + r_matrix)
+
+        dqtdy =  np.dot(dqt_line, dy_line) + np.dot(r_matrix, q0)
+        return - np.dot( dq2_inv,dqtdy.T)
+
+
+class Fitter:
+    def __init__(self, pdb, imgs, simulator, target_pdbs=None):
+        # inputs
+        self.pdb = pdb
+        self.imgs = imgs
+        self.nimgs = len(imgs)
+        self.simulator = simulator
+        if target_pdbs is None:
+            self.target_pdbs = [pdb for i in range(self.nimgs)]
+        else:
+            self.target_pdbs= target_pdbs
+
+        #RIGID outputs
+        self.rigid_angles=  None
+        self.rigid_shifts=  None
+        self.rigid_mses = None
+
+        #Flexible outputs
+        self.flexible_angles = None
+        self.flexible_shifts = None
+        self.flexible_eta = None
+        self.flexible_mses = None
+        self.flexible_rmsds = None
+        self.flexible_coords = None
 
     def dump(self, file):
         with open(file, "wb") as f:
@@ -295,609 +391,179 @@ class AFMFitting:
         with open(file, "rb") as f:
             return pickle.load(f)
 
-    def show(self):
-        self.plotter.start(imgf=self.fitted_imgs[-1], imge=self.img, mse=self.mse, rmsd=self.rmsd)
+    def init_projmatch_processes(self, library,anglesRawArray,shiftsRawArray, msesRawArray, nimgs, n_best_views):
+        global library_global
+        global angles_global
+        global shifts_global
+        global mses_global
+        library_global = library
+
+        angles_global = frombuffer(anglesRawArray, dtype=np.float64,
+                                   count=len(anglesRawArray)).reshape(nimgs,n_best_views,3)
+
+        shifts_global = frombuffer(shiftsRawArray, dtype=np.float64,
+                                   count=len(shiftsRawArray)).reshape(nimgs,n_best_views, 3)
+        mses_global = frombuffer(msesRawArray, dtype=np.float64,
+                                   count=len(msesRawArray)).reshape(nimgs,n_best_views)
+
+
+    def run_projmatch_processes(self, workdata):
+        rank = workdata[0]
+        n_best_views = workdata[3]
+
+        projMatch = ProjMatch(img=self.imgs[rank], simulator=self.simulator, pdb=self.pdb)
+        projMatch.run(library=library_global, verbose=False)
+
+        idx_best_views =np.argsort(projMatch.mse)[:n_best_views]
+        angles_global[rank,:] = projMatch.angles[idx_best_views]
+        shifts_global[rank,:] = projMatch.shifts[idx_best_views]
+        mses_global[rank,:] = projMatch.mse[idx_best_views]
+
+    def fit_rigid(self, n_cpu, angular_dist=10.0, verbose=False, zshift_range=None, n_best_views=3):
+
+        #inputs
+        if zshift_range is None:
+            zshift_range = np.linspace(-20.0,20.0,10)
+
+        # create library
+        library = self.simulator.project_library(n_cpu=n_cpu, pdb=self.pdb,  angular_dist=angular_dist, verbose=verbose,
+                    zshift_range=zshift_range)
+
+        workdata=[]
+        for i in range(self.nimgs):
+            workdata.append(
+                [i, self.imgs[i], self.nimgs, n_best_views]
+            )
+        # create output arrays
+        anglesRawArray = RawArray("d", self.nimgs*3*n_best_views)
+        shiftsRawArray = RawArray("d", self.nimgs*3*n_best_views)
+        msesRawArray = RawArray("d", self.nimgs*n_best_views)
+
+        # run
+        p = Pool(n_cpu, initializer=self.init_projmatch_processes, initargs=(library, anglesRawArray, shiftsRawArray,msesRawArray, self.nimgs, n_best_views))
+        for _ in tqdm.tqdm(p.imap_unordered(self.run_projmatch_processes, workdata), total=len(workdata), desc="Projection Matching"
+                           , disable=not verbose):
+            pass
+
+        # get arrays
+        angles = frombuffer(anglesRawArray, dtype=np.float64,
+                                   count=len(anglesRawArray)).reshape(self.nimgs,n_best_views, 3)
+
+        shifts = frombuffer(shiftsRawArray, dtype=np.float64,
+                                   count=len(shiftsRawArray)).reshape(self.nimgs,n_best_views, 3)
+        mses = frombuffer(msesRawArray, dtype=np.float64,
+                                   count=len(msesRawArray)).reshape(self.nimgs,n_best_views)
+
+        self.rigid_angles= angles
+        self.rigid_shifts= shifts
+        self.rigid_mses= mses
+
+    def fit_flexible(self, n_cpu, nma, angular_dist=10.0, verbose=False, zshift_range=None, n_best_views=3,
+                     n_iter=10, gamma=50, gamma_rigid=10, plot=False):
+        self.fit_rigid(n_cpu=n_cpu, angular_dist=angular_dist,
+                        verbose=verbose, zshift_range=zshift_range, n_best_views=n_best_views)
+
+
+        msesRawArray   = RawArray("d", self.nimgs * (n_iter+1))
+        rmsdsRawArray  = RawArray("d", self.nimgs * (n_iter+1))
+        coordsRawArray = RawArray("f", self.nimgs * nma.pdb.n_atoms * 3)
+        etaRawArray    = RawArray("d", self.nimgs * nma.nmodes_total)
+        anglesRawArray = RawArray("d", self.nimgs*3)
+        shiftsRawArray = RawArray("d", self.nimgs*3)
+
+        workdata = []
+        for i in range(self.nimgs):
+            workdata.append([i])
+
+        p = Pool(n_cpu, initializer=self.init_flexible_processes, initargs=(rmsdsRawArray,anglesRawArray,
+                                shiftsRawArray, msesRawArray, coordsRawArray, etaRawArray,
+                                nma, n_iter, n_best_views, plot, gamma, gamma_rigid))
+        for _ in tqdm.tqdm(p.imap_unordered(self.run_flexible_processes, workdata), total=len(workdata), desc="Flexible Fitting"
+                           , disable=not verbose):
+            pass
+
+        self.flexible_mses = frombuffer(msesRawArray, dtype=np.float64,
+                                   count=len(msesRawArray)).reshape(self.nimgs, (n_iter+1))
+        self.flexible_rmsds = frombuffer(rmsdsRawArray, dtype=np.float64,
+                                   count=len(rmsdsRawArray)).reshape(self.nimgs, (n_iter+1))
+        self.flexible_coords = frombuffer(coordsRawArray, dtype=np.float32,
+                                   count=len(coordsRawArray)).reshape(self.nimgs, nma.pdb.n_atoms, 3)
+        self.flexible_eta = frombuffer(etaRawArray, dtype=np.float64,
+                                   count=len(etaRawArray)).reshape(self.nimgs, nma.nmodes_total)
+        self.flexible_angles = frombuffer(anglesRawArray, dtype=np.float64,
+                                   count=len(anglesRawArray)).reshape(self.nimgs, 3)
+        self.flexible_shifts = frombuffer(shiftsRawArray, dtype=np.float64,
+                                   count=len(shiftsRawArray)).reshape(self.nimgs, 3)
+
+        for i in range(self.nimgs):
+            R, t = PDB.alignCoords( self.flexible_coords[i], self.pdb.coords)
+            self.flexible_angles[i] = matrix2eulerAngles(R.T)
+            self.flexible_shifts[i] = t
+
+    def init_flexible_processes(self, rmsdsRawArray,anglesRawArray,shiftsRawArray, msesRawArray, coordsRawArray, etaRawArray,
+                                nma, n_iter, n_best_views, plot, gamma, gamma_rigid):
+        global eta_global
+        global rmsds_global
+        global coords_global
+        global angles_global
+        global shifts_global
+        global mses_global
+        global n_best_views_global
+        global nma_global
+        global plot_global
+        global n_iter_global
+        global gamma_global
+        global gamma_rigid_global
+        mses_global = frombuffer(msesRawArray, dtype=np.float64,
+                                   count=len(msesRawArray)).reshape(self.nimgs, (n_iter+1))
+        rmsds_global = frombuffer(rmsdsRawArray, dtype=np.float64,
+                                   count=len(rmsdsRawArray)).reshape(self.nimgs, (n_iter+1))
+        coords_global = frombuffer(coordsRawArray, dtype=np.float32,
+                                   count=len(coordsRawArray)).reshape(self.nimgs, nma.pdb.n_atoms, 3)
+        eta_global = frombuffer(etaRawArray, dtype=np.float64,
+                                   count=len(etaRawArray)).reshape(self.nimgs, nma.nmodes_total)
+        angles_global = frombuffer(anglesRawArray, dtype=np.float64,
+                                   count=len(anglesRawArray)).reshape(self.nimgs, 3)
+        shifts_global = frombuffer(shiftsRawArray, dtype=np.float64,
+                                   count=len(shiftsRawArray)).reshape(self.nimgs, 3)
+        nma_global = nma
+        n_best_views_global = n_best_views
+        plot_global = plot
+        n_iter_global = n_iter
+        gamma_global = gamma
+        gamma_rigid_global = gamma_rigid
+
+    def run_flexible_processes(self, workdata):
+        rank = workdata[0]
+        img = self.imgs[rank]
+
+        if plot_global:
+            plotter = FittingPlotter()
+            plotter.start(img, img, [0.0], [0.0])
+        else:
+            plotter = None
+        nmafits = []
+        for v in range(n_best_views_global):
+            tnma = nma_global.transform(self.rigid_angles[rank, v], self.rigid_shifts[rank, v])
+            nmafit = NMAFit()
+            nmafit.fit(img=img, nma=tnma, simulator=self.simulator, target_pdb=self.target_pdbs[rank],
+                       n_iter=n_iter_global, gamma=gamma_global, gamma_rigid=gamma_rigid_global, verbose=False,
+                       plot=plot_global, init_plotter=plotter)
+
+            nmafits.append(nmafit)
+
+        best_nma_idx = np.argmin([f.best_mse for f in nmafits])
+        mses_global[rank] = nmafits[best_nma_idx].mse
+        rmsds_global[rank] = nmafits[best_nma_idx].rmsd
+        coords_global[rank] = nmafits[best_nma_idx].best_coords
+        eta_global[rank] = nmafits[best_nma_idx].best_eta
+        angles_global[rank] = nmafits[best_nma_idx].best_angle
+        shifts_global[rank] = nmafits[best_nma_idx].best_shift
+
+        if plot_global:
+            plotter.update(nmafits[best_nma_idx].best_fitted_img, img, mses_global[rank], rmsds_global[rank],
+                           mse_a=[f.mse for f in nmafits],
+                           rmsd_a=[f.rmsd for f in nmafits])
 
-    def fit_nma(self, n_iter, gamma=50, gamma_rigid=5, mask=None, verbose=True, plot=False, q_init=None, plotter=None,
-                zshift = None):
-        dtimetot = time.time()
 
-        # Inputs
-        if zshift is None:
-            zshift=0.0
-        nma=self.nma
-        pdb=self.pdb
-        size = self.simulator.size
-        pexp = self.img
-
-        # define output arrays
-        self.dcd = np.zeros((n_iter+1, pdb.n_atoms, 3))
-        self.mse = np.zeros(n_iter+1)
-        self.rmsd =np.zeros(n_iter+1)
-        self.fitted_imgs =np.zeros((n_iter+1, size, size))
-        self.eta = np.zeros((n_iter + 1, nma.nmodes_total))
-        if q_init is not None:
-            self.eta[0] = q_init
-
-        # init state
-        fitted = nma.applySpiralTransformation(eta=self.eta[0], pdb=pdb)
-        psim = self.simulator.pdb2afm(fitted, zshift=zshift)
-        self.mse[0]=np.linalg.norm(psim - pexp)**2
-        self.rmsd[0]=fitted.getRMSD(self.target_pdb, align=True)
-        self.dcd[0] = fitted.coords
-        self.fitted_imgs[0] = psim
-
-        # Define regularization
-        regul = np.zeros( nma.nmodes_total)
-        regul[:6] = 1/(gamma_rigid**2)
-        regul[6:] = 1/(gamma**2)
-        linear_modes_line =  nma.linear_modes.reshape(nma.nmodes_total, nma.natoms * 3)
-        r_matrix = np.dot(linear_modes_line, linear_modes_line.T) * regul
-
-        if plot:
-            if plotter is not None:
-                plotter.update_imgs(psim, pexp)
-                plotter.draw()
-            else:
-                self.plotter.start(psim, pexp, self.mse, self.rmsd, interactive=True)
-
-        for i in range(n_iter):
-            # Compute the gradient
-            dq = self.simulator.pdb2afm_grad(pdb=fitted,nma=nma, psim=psim, zshift=zshift)
-
-            # Compute the new NMA amplitudes
-            q_est = q_estimate(psim, pexp, dq,r_matrix=r_matrix, q0=self.eta[i], mask=mask)
-            self.eta[i + 1] = q_est + self.eta[i]
-
-            # Apply NMA amplitudes to the PDB
-            fitted = nma.applySpiralTransformation(eta=self.eta[i+1], pdb=pdb)
-
-            # Simulate the new image
-            psim = self.simulator.pdb2afm(fitted, zshift=zshift)
-
-            # Update outputs
-            self.dcd[i+1] = fitted.coords
-            self.mse[i+1] = np.linalg.norm(psim - pexp)**2
-            self.rmsd[i+1]= fitted.getRMSD(self.target_pdb, align=True)
-            self.fitted_imgs[i+1]=psim
-
-
-            norm = np.array([np.linalg.norm(self.eta[i+1]-self.eta[q]) for q in range(i)])
-            if any(norm<  1.0):
-                for q in range(i, n_iter):
-                    self.dcd[q + 1] = self.dcd[i+1]
-                    self.mse[q + 1] = self.mse[i+1]
-                    self.rmsd[q + 1] = self.rmsd[i+1]
-                    self.fitted_imgs[q + 1] = self.fitted_imgs[i+1]
-                break
-
-            if verbose:
-                print("Iter %i = %.2f ; %.2f" % (i, self.mse[i+1], self.rmsd[i+1]))
-                print(self.eta[i + 1])
-
-            if plot:
-                if plotter is not None:
-                    plotter.update_imgs(psim, pexp)
-                    plotter.draw()
-                else:
-                    self.plotter.update(psim, pexp, self.mse, self.rmsd)
-
-        best_idx= np.argmin(self.mse)
-        self.best_mse= self.mse[best_idx]
-        self.best_rmsd = self.rmsd[best_idx]
-        self.best_eta= self.eta[best_idx]
-        self.best_fitted_img=self.fitted_imgs[best_idx]
-        self.best_coords = self.dcd[best_idx]
-
-        R, t = PDB.alignCoords( self.best_coords, self.pdb.coords)
-        self.best_angle = matrix2eulerAngles(R.T)
-        self.best_shift = t
-
-        if verbose:
-            print("\t TIME_TOTAL   => %.4f s" % (time.time() - dtimetot))
-
-
-
-    def fit_nma_rotations(self, n_iter, gamma, gamma_rigid,
-                angular_dist, near_angle_cutoff, n_views, mask =None,
-                plot = True, verbose = False, zshift_range=0.0, zshift_points=1, init_library=None):
-
-        # Inputs
-        maxiter = len(angular_dist)
-        psim = self.simulator.pdb2afm(self.pdb)
-        pexp = self.img
-        pdb = self.pdb
-        fitted = pdb.copy()
-        curr_mse = np.linalg.norm(psim- pexp)**2
-        curr_eta = np.zeros( self.nma.nmodes_total)
-        best_zshift=None
-        best_angle=np.zeros(3)
-        best_shift=np.zeros(3)
-        near_angle=None
-
-        # Output arrays
-        self.mse = np.array([curr_mse])
-        self.rmsd = np.array([pdb.getRMSD(self.target_pdb, align=True)])
-        self.dcd = np.array([pdb.coords])
-        self.eta = np.array([curr_eta])
-        self.fitted_imgs = np.array([psim])
-        self.projMatch = []
-
-        if plot:
-            self.plotter.start(psim, pexp, self.mse , self.rmsd, interactive=True)
-
-        for ii in range(maxiter):
-            if verbose:
-                print("Iteration : %i"%ii)
-            zshift_list = np.linspace(-zshift_range[ii], zshift_range[ii], zshift_points[ii])
-
-            # get image library
-            if ii == 0 or near_angle_cutoff[ii] == -1:
-                if ii == 0 and init_library is not None:
-                    image_library = init_library
-                else:
-                    image_library= self.simulator.get_projection_library(fitted,
-                                            zshift_range=zshift_list, angular_dist=angular_dist[ii], verbose=verbose)
-            else:
-                image_library= self.simulator.get_projection_library(fitted, near_angle=near_angle, init_zshift=best_zshift,
-                    near_angle_cutoff=near_angle_cutoff[ii], zshift_range=zshift_list, angular_dist=angular_dist[ii], verbose=verbose)
-
-            # performs projection matching
-            projMatch = ProjMatch(library=image_library, img = pexp, simulator=self.simulator, pdb=fitted)
-            projMatch.run(angular_dist=angular_dist[ii],verbose=verbose)
-            self.projMatch.append(projMatch)
-
-            # get ordered array of best views
-            best_views_idx = np.argsort(projMatch.mse)
-            if len(best_views_idx)< n_views[ii]:
-                n_best = len(best_views_idx)
-                warn("Could not get the requested number of views %i /%i"%(n_best,n_views[ii]))
-            else:
-                best_views_idx = best_views_idx[:n_views[ii]]
-                n_best = n_views[ii]
-
-            # loop over the best views and run NMA fitting
-            nmafits = []
-            for view in range(n_best):
-                angle_view = projMatch.angles[best_views_idx[view]]
-                shift_view = projMatch.shifts[best_views_idx[view]]
-
-                # rotate NMA
-                rot_nma = self.nma.transform(angle=angle_view, shift=shift_view)
-                candidate = rot_nma.pdb
-
-                # Fit NMA
-                nmafit = AFMFitting(pdb=candidate, img=self.img,
-                           simulator=self.simulator, nma=rot_nma, target_pdb=self.target_pdb)
-                nmafit.fit_nma(n_iter=n_iter, gamma=gamma, gamma_rigid=gamma_rigid, mask=mask, verbose=verbose, plot=plot,
-                                  plotter=self.plotter,  q_init=curr_eta, zshift = 0.0)
-                nmafits.append(nmafit)
-
-            # get best NMA fit
-            best_fit_idx = np.argmin([np.min(nmafit.mse) for nmafit in nmafits])
-            best_nmafit = nmafits[best_fit_idx]
-            best_view_idx = best_views_idx[best_fit_idx]
-            best_iter_idx = np.argmin(best_nmafit.mse)
-            best_mse = best_nmafit.mse[best_iter_idx]
-
-            # update alignemnts
-            if best_mse< curr_mse:
-                curr_eta = best_nmafit.eta[best_iter_idx]
-                near_angle = image_library.angles[best_view_idx]
-                best_angle = projMatch.angles[best_view_idx]
-                best_shift = projMatch.shifts[best_view_idx]
-                best_zshift = best_shift[2]
-                curr_mse = best_mse
-            else:
-                warn("Could not improve the fitting")
-                if ii == 0:
-                    return
-
-            # update outputs
-            self.mse = np.concatenate((self.mse, best_nmafit.mse))
-            self.rmsd = np.concatenate((self.rmsd, best_nmafit.rmsd))
-            self.dcd = np.concatenate((self.dcd, best_nmafit.dcd))
-            self.fitted_imgs = np.concatenate((self.fitted_imgs, best_nmafit.fitted_imgs))
-            self.eta = np.concatenate((self.eta, best_nmafit.eta))
-
-            fitted = self.nma.applySpiralTransformation(eta=curr_eta, pdb=pdb)
-            fitted_rot = fitted.copy()
-            fitted_rot.rotate(best_angle)
-            fitted_rot.translate(best_shift)
-            psim = self.simulator.pdb2afm(fitted_rot, zshift= 0.0)
-            self.fitted_imgs = np.concatenate((self.fitted_imgs,np.array([psim])))
-
-            if plot:
-                self.plotter.update(psim, pexp, self.mse, self.rmsd,
-                                    mse_a = [f.mse for f in nmafits],
-                                    rmsd_a = [f.rmsd for f in nmafits])
-
-        best_idx= np.argmin(self.mse)
-        self.best_mse= self.mse[best_idx]
-        self.best_rmsd = self.rmsd[best_idx]
-        self.best_eta= self.eta[best_idx]
-        self.best_fitted_img=self.fitted_imgs[best_idx]
-        self.best_coords = self.dcd[best_idx]
-
-        R, t = PDB.alignCoords( self.best_coords, self.pdb.coords)
-        self.best_angle = matrix2eulerAngles(R.T)
-        self.best_shift = t
-
-
-    def fit_nma_rotations(self, n_iter, gamma, gamma_rigid,
-                angular_dist, near_angle_cutoff, n_views, mask =None,
-                plot = True, verbose = False, zshift_range=0.0, zshift_points=1, init_library=None):
-
-        # Inputs
-        maxiter = len(angular_dist)
-        psim = self.simulator.pdb2afm(self.pdb)
-        pexp = self.img
-        pdb = self.pdb
-        fitted = pdb.copy()
-        curr_mse = np.linalg.norm(psim- pexp)**2
-        curr_eta = np.zeros( self.nma.nmodes_total)
-        best_zshift=None
-        best_angle=np.zeros(3)
-        best_shift=np.zeros(3)
-        near_angle=None
-
-        # Output arrays
-        self.mse = np.array([curr_mse])
-        self.rmsd = np.array([pdb.getRMSD(self.target_pdb, align=True)])
-        self.dcd = np.array([pdb.coords])
-        self.eta = np.array([curr_eta])
-        self.fitted_imgs = np.array([psim])
-        self.projMatch = []
-
-        if plot:
-            self.plotter.start(psim, pexp, self.mse , self.rmsd, interactive=True)
-
-        for ii in range(maxiter):
-            if verbose:
-                print("Iteration : %i"%ii)
-            zshift_list = np.linspace(-zshift_range[ii], zshift_range[ii], zshift_points[ii])
-
-            # get image library
-            if ii == 0 or near_angle_cutoff[ii] == -1:
-                if ii == 0 and init_library is not None:
-                    image_library = init_library
-                else:
-                    image_library= self.simulator.get_projection_library(fitted,
-                                            zshift_range=zshift_list, angular_dist=angular_dist[ii], verbose=verbose)
-            else:
-                image_library= self.simulator.get_projection_library(fitted, near_angle=near_angle, init_zshift=best_zshift,
-                    near_angle_cutoff=near_angle_cutoff[ii], zshift_range=zshift_list, angular_dist=angular_dist[ii], verbose=verbose)
-
-            # performs projection matching
-            projMatch = ProjMatch(library=image_library, img = pexp, simulator=self.simulator, pdb=fitted)
-            projMatch.run(angular_dist=angular_dist[ii],verbose=verbose)
-            self.projMatch.append(projMatch)
-
-            # get ordered array of best views
-            best_views_idx = np.argsort(projMatch.mse)
-            if len(best_views_idx)< n_views[ii]:
-                n_best = len(best_views_idx)
-                warn("Could not get the requested number of views %i /%i"%(n_best,n_views[ii]))
-            else:
-                best_views_idx = best_views_idx[:n_views[ii]]
-                n_best = n_views[ii]
-
-            # loop over the best views and run NMA fitting
-            nmafits = []
-            for view in range(n_best):
-                angle_view = projMatch.angles[best_views_idx[view]]
-                shift_view = projMatch.shifts[best_views_idx[view]]
-
-                # rotate NMA
-                rot_nma = self.nma.transform(angle=angle_view, shift=shift_view)
-                candidate = rot_nma.pdb
-
-                # Fit NMA
-                nmafit = AFMFitting(pdb=candidate, img=self.img,
-                           simulator=self.simulator, nma=rot_nma, target_pdb=self.target_pdb)
-                nmafit.fit_nma(n_iter=n_iter, gamma=gamma, gamma_rigid=gamma_rigid, mask=mask, verbose=verbose, plot=plot,
-                                  plotter=self.plotter,  q_init=curr_eta, zshift = 0.0)
-                nmafits.append(nmafit)
-
-            # get best NMA fit
-            best_fit_idx = np.argmin([np.min(nmafit.mse) for nmafit in nmafits])
-            best_nmafit = nmafits[best_fit_idx]
-            best_view_idx = best_views_idx[best_fit_idx]
-            best_iter_idx = np.argmin(best_nmafit.mse)
-            best_mse = best_nmafit.mse[best_iter_idx]
-
-            # update alignemnts
-            if best_mse< curr_mse:
-                curr_eta = best_nmafit.eta[best_iter_idx]
-                near_angle = image_library.angles[best_view_idx]
-                best_angle = projMatch.angles[best_view_idx]
-                best_shift = projMatch.shifts[best_view_idx]
-                best_zshift = best_shift[2]
-                curr_mse = best_mse
-            else:
-                warn("Could not improve the fitting")
-                if ii == 0:
-                    return
-
-            # update outputs
-            self.mse = np.concatenate((self.mse, best_nmafit.mse))
-            self.rmsd = np.concatenate((self.rmsd, best_nmafit.rmsd))
-            self.dcd = np.concatenate((self.dcd, best_nmafit.dcd))
-            self.fitted_imgs = np.concatenate((self.fitted_imgs, best_nmafit.fitted_imgs))
-            self.eta = np.concatenate((self.eta, best_nmafit.eta))
-
-            fitted = self.nma.applySpiralTransformation(eta=curr_eta, pdb=pdb)
-            fitted_rot = fitted.copy()
-            fitted_rot.rotate(best_angle)
-            fitted_rot.translate(best_shift)
-            psim = self.simulator.pdb2afm(fitted_rot, zshift= 0.0)
-            self.fitted_imgs = np.concatenate((self.fitted_imgs,np.array([psim])))
-
-            if plot:
-                self.plotter.update(psim, pexp, self.mse, self.rmsd,
-                                    mse_a = [f.mse for f in nmafits],
-                                    rmsd_a = [f.rmsd for f in nmafits])
-
-        best_idx= np.argmin(self.mse)
-        self.best_mse= self.mse[best_idx]
-        self.best_rmsd = self.rmsd[best_idx]
-        self.best_eta= self.eta[best_idx]
-        self.best_fitted_img=self.fitted_imgs[best_idx]
-        self.best_coords = self.dcd[best_idx]
-
-        R, t = PDB.alignCoords( self.best_coords, self.pdb.coords)
-        self.best_angle = matrix2eulerAngles(R.T)
-        self.best_shift = t
-
-    def fit_rotations(self, angular_dist, near_angle_cutoff,
-                plot = True, verbose = False, zshift_range=0.0, zshift_points=1, init_library=None):
-
-        # Inputs
-        maxiter = len(angular_dist)
-        psim = self.simulator.pdb2afm(self.pdb)
-        pexp = self.img
-        best_zshift=None
-        near_angle=None
-
-        # Output arrays
-        self.mse = np.array([np.linalg.norm(psim- pexp)**2])
-        self.rmsd = np.array([0.0])
-        self.fitted_imgs = np.array([psim])
-        self.projMatch = []
-
-        if plot:
-            self.plotter.start(psim, pexp, self.mse , self.rmsd, interactive=True)
-
-        for ii in range(maxiter):
-            if verbose:
-                print("Iteration : %i"%ii)
-            zshift_list = np.linspace(-zshift_range[ii], zshift_range[ii], zshift_points[ii])
-
-            # get image library
-            if ii == 0 or near_angle_cutoff[ii] == -1:
-                if ii == 0 and init_library is not None:
-                    image_library = init_library
-                else:
-                    image_library= self.simulator.get_projection_library(self.pdb,
-                                            zshift_range=zshift_list, angular_dist=angular_dist[ii], verbose=verbose)
-            else:
-                image_library= self.simulator.get_projection_library(self.pdb, near_angle=near_angle, init_zshift=best_zshift,
-                    near_angle_cutoff=near_angle_cutoff[ii], zshift_range=zshift_list, angular_dist=angular_dist[ii], verbose=verbose)
-
-            # performs projection matching
-            projMatch = ProjMatch(library=image_library, img = pexp, simulator=self.simulator, pdb=self.pdb)
-            projMatch.run(angular_dist=angular_dist[ii],verbose=verbose)
-            self.projMatch.append(projMatch)
-
-            best_zshift = projMatch.best_shift[2]
-            near_angle = projMatch.best_angle_sphere
-
-            # update outputs
-            self.mse = np.concatenate((self.mse, np.array([projMatch.best_mse])))
-            self.rmsd = np.concatenate((self.rmsd, np.array([0.0])))
-            self.fitted_imgs = np.concatenate((self.fitted_imgs, np.array([projMatch.best_fitted_img])))
-
-            if plot:
-                self.plotter.update(projMatch.best_fitted_img, pexp, self.mse, self.rmsd)
-
-
-        best_idx= np.argmin(self.mse)
-        self.best_mse= self.mse[best_idx]
-        self.best_rmsd = self.rmsd[best_idx]
-        self.best_fitted_img=self.fitted_imgs[best_idx]
-        self.best_coords = self.pdb.coords
-        self.best_angle = self.projMatch[best_idx-1].best_angle
-        self.best_shift = self.projMatch[best_idx-1].best_shift
-
-
-# @njit
-# def corr_sum_njit(f_pcs_fft, g_pcs_fft, angleSize, radiusSize):
-#     corr_fourier = np.zeros((angleSize), dtype=np.complex128)
-#     for r in range(radiusSize):
-#         corr_fourier += r * g_pcs_fft[:, r] * np.conjugate(f_pcs_fft[:, r])
-#     return corr_fourier
-
-
-# def get_corr_fourier(f_pcs_fft, g_pcs_fft, angleSize, radiusSize):
-#     corr_fourier = corr_sum_njit(f_pcs_fft, g_pcs_fft, angleSize, radiusSize)
-#     corr = np.fft.ifftn(corr_fourier).real
-#
-#     argmax_corr = np.argmax(corr)
-#     max_corr = corr[argmax_corr]
-#     return  (argmax_corr*np.pi*2)/angleSize, max_corr
-
-def get_corr_fourier(g_pcs_fft, f_pcs_fft, angleSize):
-    corr_fourier = np.sum(g_pcs_fft * np.conjugate(f_pcs_fft), axis=1)
-    corr = np.fft.ifftn(corr_fourier).real
-    argmax_corr = np.argmax(corr)
-    max_corr = corr[argmax_corr]
-    return  (argmax_corr*np.pi*2)/angleSize, max_corr
-def get_mse_img(g_pcs, f_pcs,angleSize):
-    mse = np.zeros(angleSize)
-    for i in range(angleSize):
-        mse[i] = np.sum(np.square(g_pcs - np.roll(f_pcs, i, axis=0) ))
-    min_mse = np.argmin(mse)
-    return (min_mse*np.pi*2)/angleSize, mse[min_mse]
-
-
-def trans_match(img1, img2):
-    size = img1.shape[0]
-    img1_ft = np.fft.fftn(img1)
-    img2_ft = np.fft.fftn(img2)
-    corr  = np.fft.ifftn(img1_ft * np.conjugate(img2_ft)).real
-    shiftx = np.argmax(corr.sum(axis=1))
-    shifty = np.argmax(corr.sum(axis=0))
-    if shiftx>= size//2:
-        shiftx-= size
-    if shifty>= size//2:
-        shifty-= size
-    return -shiftx, -shifty, np.max(corr)
-
-def rot_trans_match(img1, img2, angleSize, img2_norm2=None):
-    if img2_norm2 is None:
-        img2_norm2 = np.sum(np.square(img2))
-    mse = np.zeros(angleSize)
-    shiftx = np.zeros(angleSize)
-    shifty = np.zeros(angleSize)
-    for i in range(angleSize):
-        ang = (360/angleSize)*i
-        rot_img = rotate(img1, ang)
-        rot_img_norm2 = np.sum(np.square(rot_img))
-        _x, _y, _c = trans_match(rot_img, img2)
-        mse[i] = rot_img_norm2 + img2_norm2 -2*_c
-        shiftx[i] = _x
-        shifty[i] = _y
-
-    minmse =  np.argmin(mse)
-    angle = np.rad2deg(minmse*np.pi*2/angleSize)
-    shift = np.array([shiftx[minmse], shifty[minmse]])
-    return angle, shift, mse[minmse]
-
-def rot_trans_match_full(imgs1, img2, imgs1_norm2, img2_norm2=None):
-    nimgs = imgs1.shape[0]
-    if img2_norm2 is None:
-        img2_norm2 = np.sum(np.square(img2))
-    mse = np.zeros(nimgs)
-    shiftx = np.zeros(nimgs)
-    shifty = np.zeros(nimgs)
-    for i in range(nimgs):
-        _x, _y, _c = trans_match(imgs1[i], img2)
-        mse[i] = imgs1_norm2[i] + img2_norm2 -2*_c
-        shiftx[i] = _x
-        shifty[i] = _y
-
-    min_mse = np.argmin(mse)
-
-    shift = np.array([shiftx[min_mse], shifty[min_mse]])
-
-    return min_mse, mse[min_mse], shift
-
-# def rot_trans_z_match_full(imgs1, img2, img2_norm2, zshift_range):
-#     #inputs
-#     ZERO_CUTOFF = 5.0  # Angstrom
-#     n_zviews = imgs1.shape[0]
-#     n_zshifts = len(zshift_range)
-#
-#     # create arrays
-#     mse = np.zeros((n_zviews, n_zshifts))
-#     shift = np.zeros((n_zviews, n_zshifts,2))
-#     for i in range(n_zviews):
-#         for z in range(n_zshifts):
-#             img_zshift = imgs1[i].copy()
-#             img_zshift[img_zshift >= ZERO_CUTOFF] += zshift_range[z]
-#             if zshift_range[z] < 0:
-#                 img_zshift[img_zshift < 0.0] = 0.0
-#             img_zshift_norm2 = np.sum(np.square(img_zshift))
-#
-#             _x, _y, _c = trans_match(img_zshift, img2)
-#             mse[i, z] = img_zshift_norm2 + img2_norm2 -2*_c
-#             shift[i,z, 0] = _x
-#             shift[i,z, 1] = _y
-#
-#     return mse, shift
-
-# def rot_trans_z_match(imgs, img_exp, angleSize):
-#     NZSHIFT = len(imgs)
-#     angle = np.zeros(NZSHIFT)
-#     shiftxy = np.zeros((NZSHIFT,2))
-#     mse = np.zeros(NZSHIFT)
-#     for i in range(NZSHIFT):
-#         _a, _xy, _mse = rot_trans_match(imgs[i], img_exp, angleSize=angleSize)
-#         angle[i] = _a
-#         shiftxy[i] = _xy
-#         mse[i] = _mse
-#     minmse = np.argmin(mse)
-#
-#     return angle[minmse], shiftxy[minmse],  minmse, mse[minmse]
-
-
-# def rotational_matching(g_img, f_imgs, imageSize, angleSize, radiusSize, zshift_list=None, MAX_SHIFT_SEARCH = 5):
-#     N_SHIFT_SEARCH = MAX_SHIFT_SEARCH*2 - 1
-#     if zshift_list is None:
-#         Z_SHIFT_SEARCH = 1
-#     else:
-#         Z_SHIFT_SEARCH = len(zshift_list)
-#     curr_mse = -1.0
-#     corr_matrix = np.zeros((Z_SHIFT_SEARCH, N_SHIFT_SEARCH, N_SHIFT_SEARCH))
-#     g_pcs_stk = np.zeros((Z_SHIFT_SEARCH, N_SHIFT_SEARCH, N_SHIFT_SEARCH, angleSize, radiusSize))
-#     angle_est = np.zeros(3)
-#     shift_est = np.zeros(3)
-#
-#
-#     f_com = np.array([imageSize/2, imageSize/2])
-#     g_com = get_com(g_img)
-#
-#     f_pcs, _ = polarTransform.convertToPolarImage(f_img.T, radiusSize=radiusSize, angleSize=angleSize,
-#                                                   center=f_com)
-#     f_pcs_fft = np.fft.fft(f_pcs, axis=0)
-#     f_sum = np.sum(np.square(f_pcs))
-#
-#     for x in range(N_SHIFT_SEARCH):
-#         xi = x - MAX_SHIFT_SEARCH + 1
-#         for y in range(N_SHIFT_SEARCH):
-#             yi = y - MAX_SHIFT_SEARCH + 1
-#             tmp_com = g_com + np.array([xi, yi])
-#
-#             for z in range(Z_SHIFT_SEARCH):
-#                 if zshift_list is None:
-#                     f_img = f_imgs
-#                     zi = 0.0
-#                 else:
-#                     f_img = f_imgs[z]
-#                     zi = zshift_list[z]
-#
-#                 g_pcs, _ = polarTransform.convertToPolarImage(g_img.T, radiusSize=radiusSize, angleSize=angleSize,
-#                                                               center=tmp_com)
-#                 g_pcs_fft = np.fft.fft(g_pcs, axis=0)
-#                 g_sum = np.sum(np.square(g_pcs))
-#                 g_pcs_stk [z,x,y] = g_pcs
-#
-#                 angle, corr = get_corr_fourier(g_pcs_fft= g_pcs_fft, f_pcs_fft=f_pcs_fft, angleSize=angleSize)
-#                 min_mse = f_sum + g_sum + -2 * corr
-#                 corr_matrix[z,x,y] = min_mse
-#
-#                 if (min_mse< curr_mse) or (curr_mse==-1.0):
-#                     curr_mse=min_mse
-#                     angle_est = np.rad2deg(angle)
-#                     shift_est[:2] = tmp_com-f_com
-#                     shift_est[2] = -zi
-#
-#     return angle_est, shift_est, curr_mse, corr_matrix, g_pcs_stk
-
-def q_estimate(psim, pexp, dq, r_matrix, q0, mask=None):
-    nmodes = dq.shape[0]
-    size = psim.shape[0]
-    dy = (psim - pexp)
-    if mask is not None:
-        dy*= mask
-        dq*= mask
-
-    dqt_line = dq.reshape(nmodes, size**2)
-    dy_line = dy.reshape(size**2).T
-    dqtdq = np.dot(dqt_line, dqt_line.T)
-
-    dq2_inv = np.linalg.inv(dqtdq + r_matrix)
-
-    dqtdy =  np.dot(dqt_line, dy_line) + np.dot(r_matrix, q0)
-    return - np.dot( dq2_inv,dqtdy.T)
 

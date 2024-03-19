@@ -367,6 +367,7 @@ class FittingPlotter:
 
         self.fig=fig
         self.ax=ax
+        fig.show()
 
 
     def update_imgs(self, imgf, imge):
