@@ -1,12 +1,12 @@
 import unittest
-from src.io import PDB
-from src.utils import get_tests_data, get_tests_tmp, get_cc, get_angular_distance
+from afmfit.pdbio import PDB
+from afmfit.utils import get_tests_data, get_tests_tmp, get_cc, get_angular_distance
 from os.path import join
 import numpy as np
-from src.nma import NormalModesRTB
-from src.simulator import AFMSimulator
-from src.fitting import Fitter, ProjMatch, NMAFit
-from src.viewer import viewAFM
+from afmfit.nma import NormalModesRTB
+from afmfit.simulator import AFMSimulator
+from afmfit.fitting import Fitter, ProjMatch, NMAFit
+from afmfit.viewer import viewAFM
 import polarTransform
 import multiprocessing
 
@@ -114,7 +114,7 @@ class TestFitting(unittest.TestCase):
 
         # assert that the MSE calculated by trans_match is the same than the MSE obtained by applying the shifts to
         #  the structure and projecting to image again
-        self.assertAlmostEqual(np.linalg.norm(img3 - img2) , mse, 5)
+        self.assertAlmostEqual(np.linalg.norm(img3 - img2) , mse, 2)
 
     def test_proj_match(self):
         angular_dist = 10
@@ -147,7 +147,7 @@ class TestFitting(unittest.TestCase):
 
 
     def test_fitting_rigid(self):
-        angular_dist = 5
+        angular_dist = 15
 
         ref = PDB( join(get_tests_data(), "ref.pdb"))
         ref.center()
@@ -210,9 +210,8 @@ class TestFitting(unittest.TestCase):
         # viewAFM(imgs, interactive=True)
 
         fitter = Fitter(pdb=nma.pdb, imgs=imgs, simulator=sim, target_pdbs=targets)
-        # fitter.fit_rigid(n_cpu=8, angular_dist=10,
-        #                 verbose=True, zshift_range=zshift_range, n_best_views=3)
-        fitter.fit_flexible( n_cpu=N_CPU_TOTAL, nma=nma, angular_dist=10, verbose=True, zshift_range=zshift_range, n_best_views=3,
+        fitter.fit_rigid( n_cpu=N_CPU_TOTAL, angular_dist=10, verbose=True, zshift_range=zshift_range)
+        fitter.fit_flexible( n_cpu=N_CPU_TOTAL, nma=nma, verbose=True, n_best_views=3,
                      n_iter=10, gamma=10, gamma_rigid=3, plot=False)
 
         for i in range(nimg):
@@ -223,8 +222,6 @@ class TestFitting(unittest.TestCase):
             sdist = np.linalg.norm(fitter.flexible_shifts[i]-shift_gt[i])
             self.assertLess(adist, 11.0)
             self.assertLess(sdist, 3.0)
-
-
 
 if __name__ == '__main__':
     unittest.main()

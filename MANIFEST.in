@@ -1,0 +1,6 @@
+include examples/*ipynb
+include examples/examples_data/*
+include tests/*py
+include tests/tests_data/*
+include tests/tests_tmp/
+include nolb/NOLB
