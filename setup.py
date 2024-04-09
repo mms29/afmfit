@@ -1,8 +1,10 @@
 from setuptools import setup, find_packages
+import afmfit
+
 
 setup(
     name='afmfit',
-    version="0.1.0",
+    version=afmfit.__version__,
     description='Fitting package for Atomic Force Microscopy data',
     url='https://github.com/mms29/afm-fitting',
     author='Remi Vuillemot',
@@ -11,7 +13,7 @@ setup(
     include_package_data=True,
     packages=['afmfit'],
     install_requires=['tqdm',
-    		      'numba',
+    		          'numba',
                       'numpy',
                       'scikit-image',
                       'scipy',
