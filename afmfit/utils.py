@@ -261,7 +261,7 @@ def translate(img, shift):
 def get_project_root() -> Path:
     return Path(__file__).parent
 def get_tests_root():
-    return join(get_project_root(), "tests")
+    return join(get_project_root(), "../tests")
 
 def get_tests_data():
     return join(get_tests_root(), "tests_data")
