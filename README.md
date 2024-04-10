@@ -1,4 +1,4 @@
-# AFMFIT 0.4
+# AFMfit 0.4
 
 A python package for flexible fitting of AFM images  
 
