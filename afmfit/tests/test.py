@@ -32,7 +32,7 @@ class TestNMA(unittest.TestCase):
     def test_calculate_nma(self):
         nmodes = 10
         pdb = PDB( join(get_tests_data(), "ref.pdb"))
-        nma = NormalModesRTB.calculate_NMA(pdb, tmpDir=join(get_tests_tmp(), "nma"), nmodes=nmodes)
+        nma = NormalModesRTB.calculate_NMA(pdb, prefix=join(get_tests_tmp(), "nma"), nmodes=nmodes)
 
         eta = np.zeros(nma.nmodes_total)
         eta[6] = 2000

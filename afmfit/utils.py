@@ -1,3 +1,5 @@
+import afmfit
+
 import math
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,7 +11,9 @@ import matplotlib
 from sklearn.decomposition import PCA
 from umap import UMAP
 import os
-from . import CHIMERAX_PATH
+import tempfile
+import shutil
+import warnings
 
 def show_stats(fitter):
 
@@ -62,8 +66,6 @@ class DimRed:
         aligned_coords = align_coords(fitter.flexible_coords, fitter.pdb)
         dimred = cls(fitter.pdb, coords=aligned_coords, n_components=n_components, method=method)
         dimred.run(**kwargs)
-        dimred.show(cluster=fitter.get_best_rmsd())
-        dimred.show_pca_ev()
         return dimred
 
     def cluster_linear(self, ax=0, n_points=5, method="max"):
@@ -92,30 +94,45 @@ class DimRed:
 
     def show_pca_ev(self):
         if self.method == "pca":
-            fig, ax = plt.subplots(1, 1, figsize=(7, 3))
+            fig, ax = plt.subplots(1, 1, figsize=(5, 3))
             ax.stem(np.arange(1, len(self.dimred.explained_variance_ratio_) + 1), 100 * self.dimred.explained_variance_ratio_)
-            plt.show()
+            ax.set_xlabel("#PC")
+            ax.set_ylabel("EV (%) ")
+            ax.set_title("Explained variance (%) ")
+            fig.show()
+        else:
+            raise RuntimeError("Not available for UMAP")
 
-    def show(self, cluster=None, ax=None, points=None):
+    def show(self, cval=None, ax=None, points=None, cname=None, cmap="viridis"):
         if ax is None:
             ax = [0, 1]
         fig, axp = plt.subplots(1, 1, figsize=(5, 3))
-        sc = axp.scatter(self.data[:, ax[0]], self.data[:, ax[1]], c=cluster)
-        fig.colorbar(sc, ax=axp)
+        if cval is not None:
+            sc = axp.scatter(self.data[:, ax[0]], self.data[:, ax[1]], c=cval, cmap=cmap)
+            cbar = fig.colorbar(sc, ax=axp)
+            if cname is not None :
+                cbar.set_label(cname)
+        else:
+            axp.scatter(self.data[:, ax[0]], self.data[:, ax[1]])
+
         if points is not None:
             axp.plot(points[ax[0]], points[ax[1]], "o-", color="red")
-        plt.show()
 
-    def show_axis(self, ax=0, avg=True, method="std", n_points=5, tmpdir="/tmp/", align=False, align_ref=None):
+        axname = "PC" if self.method=="pca" else "UMAP"
+        axp.set_xlabel(axname + str(ax[0]))
+        axp.set_ylabel(axname + str(ax[1]))
+        fig.show()
+
+    def viewAxisChimera(self, ax=0, avg=True, method="std", n_points=5, align=False, align_ref=None, prefix=None):
         cluster, traj = self.cluster_linear(ax=ax, n_points=n_points, method=method)
-        self.show(cluster=cluster, points=traj)
+        self.show(cval=cluster, points=traj, cname="Clusters")
 
 
         if avg:
             coords = self.cluster2coords(cluster)
         else:
             if method == "umap":
-                raise RuntimeError("Inverse UMAP not implemented")
+                raise RuntimeError("Inverse UMAP not available")
             else:
                 coords = self.traj2coords(traj)
 
@@ -128,19 +145,22 @@ class DimRed:
         # numpyArr2dcd(coords, tmpdir+"traj.dcd")
         # dimred.pdb.write_pdb(tmpdir+"pdb.dcd")
 
-        for i in range(n_points):
-            tmp = self.pdb.copy()
-            tmp.coords = coords[i]
-            if align:
-                tmp = tmp.alignMol(align_ref, idx_matching_atoms=match)
-            tmp.write_pdb("%straj%i.pdb" % (tmpdir, i + 1))
-
-        with open(tmpdir + "traj.cxc", "w") as f:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            if prefix is not None:
+                tmpdir = prefix
             for i in range(n_points):
-                f.write("open %straj%i.pdb \n" % (tmpdir, i + 1))
-            f.write("morph #1-%i \n" % (n_points))
+                tmp = self.pdb.copy()
+                tmp.coords = coords[i]
+                if align:
+                    tmp = tmp.alignMol(align_ref, idx_matching_atoms=match)
+                tmp.write_pdb("%straj%i.pdb" % (tmpdir, i + 1))
 
-        os.system(CHIMERAX_PATH + " " + tmpdir + "traj.cxc")
+            with open(tmpdir + "traj.cxc", "w") as f:
+                for i in range(n_points):
+                    f.write("open %straj%i.pdb \n" % (tmpdir, i + 1))
+                f.write("morph #1-%i \n" % (n_points))
+
+            run_chimerax(tmpdir +"traj.cxc")
 
 def afm_reconstruct(stk, angles, shifts, mask=None, order=1, operation=1, vsize=1.0):
     nimg = len(stk)
@@ -241,7 +261,7 @@ def translate(img, shift):
 def get_project_root() -> Path:
     return Path(__file__).parent
 def get_tests_root():
-    return join(get_project_root(), "../tests")
+    return join(get_project_root(), "tests")
 
 def get_tests_data():
     return join(get_tests_root(), "tests_data")
@@ -390,3 +410,24 @@ def to_mesh(img, vsize, file, upsample=1, truemesh=True):
                         f.write(".v %.2f %.2f %.2f %.2f %.2f %.2f \n" % (x[i], y[j], imgup[i, j],x[i], y[j+1], imgup[i, j+1]))
                         f.write(".v %.2f %.2f %.2f %.2f %.2f %.2f \n" % (x[i], y[j], imgup[i, j],x[i+1], y[j], imgup[i+1, j]))
                     f.write("\n")
+
+
+def check_chimerax():
+    return shutil.which("chimerax") is not None
+
+
+def run_chimerax(args=""):
+    if check_chimerax():
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            script = join(tmpdirname,  "chimerax.sh")
+            with open(script, "w") as f:
+                f.write("#! ")
+                f.write(os.environ.get("SHELL"))
+                f.write("\n")
+                f.write("chimerax %s"%args)
+            os.system("chmod 777 %s && %s"%(script, script))
+    else:
+        raise RuntimeError("ChimeraX not found")
+
+def get_nolb_path():
+    return join(afmfit.__path__[0], join("nolb", "NOLB"))

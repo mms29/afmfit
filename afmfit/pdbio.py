@@ -4,6 +4,8 @@ import numpy as np
 import os
 import copy
 from Bio.SVDSuperimposer import SVDSuperimposer
+import tempfile
+from afmfit.utils import run_chimerax
 
 class PDB:
 
@@ -87,6 +89,11 @@ class PDB:
         if self.n_atoms == 0:
             raise RuntimeError("Could not read PDB file : PDB file is empty")
 
+    def viewChimera(self):
+        with tempfile.TemporaryDirectory() as tmdir:
+            fname = os.path.join(tmdir,"pdb.pdb")
+            self.write_pdb(fname)
+            run_chimerax(fname)
 
     def write_pdb(self, file):
         """

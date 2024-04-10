@@ -4,8 +4,10 @@ from afmfit.utils import euler2matrix
 
 import numpy as np
 import os
+from os.path import join
 from numba import njit
-from . import NOLB_PATH, VMD_PATH
+from afmfit.utils import get_nolb_path, run_chimerax
+import tempfile
 
 class NormalModesRTB:
     def __init__(self,pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com):
@@ -38,40 +40,69 @@ class NormalModesRTB:
         return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com)
 
     @classmethod
-    def calculate_NMA(cls, pdb, tmpDir, nmodes, cutoff=8.0, options=""):
-        if isinstance(pdb, PDB):
-            pdbfile = tmpDir+".pdb"
-            pdb.write_pdb(pdbfile)
-        else:
-            pdbfile = pdb
-            pdb = PDB(pdbfile)
+    def calculate_NMA(cls, pdb, nmodes, prefix=None, cutoff=8.0, options=""):
+        with tempfile.TemporaryDirectory() as tmpDir :
+            tmpPrefix = join(tmpDir, "")
+            if prefix is not None:
+                tmpPrefix=prefix
+            if isinstance(pdb, PDB):
+                pdbfile = tmpPrefix+".pdb"
 
-        # Run NOLB
-        cmd = "%s %s -o %s -s 0 -n %i --format 3 -c %f %s" %(NOLB_PATH, pdbfile, tmpDir, nmodes, cutoff, options)
-        os.system(cmd)
+                pdb.write_pdb(pdbfile)
+            else:
+                pdbfile = pdb
+                pdb = PDB(pdbfile)
 
-        # Read outputs
-        m_rigidR, m_rigidT, com = cls._read_rtb(tmpDir + "_rtb.txt")
-        mapping, mapping_len = cls._read_mapping(tmpDir + "_rtb-mapping.txt")
-        linear_modes = cls._read_linear_modes(tmpDir + "_linear_modes.txt")
+            # Run NOLB
+            cmd = "%s %s -o %s -s 0 -n %i --format 3 -c %f %s" %(get_nolb_path(), pdbfile, tmpPrefix, nmodes, cutoff, options)
+            if os.system(cmd):
+                raise RuntimeError("NOLB execution failed")
+
+            # Read outputs
+            m_rigidR, m_rigidT, com = cls._read_rtb( tmpPrefix+ "_rtb.txt")
+            mapping, mapping_len = cls._read_mapping(tmpPrefix+ "_rtb-mapping.txt")
+            linear_modes = cls._read_linear_modes(   tmpPrefix+ "_linear_modes.txt")
 
         return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com)
 
-    def viewVMD(self, amp, tmpDir, npoints= 10):
-        dcd = np.zeros((npoints*self.nmodes,self.natoms,3))
+    def viewChimera(self, amp=1000, npoints= 10):
+        dcd = np.zeros((self.nmodes, npoints, self.natoms,3))
 
-        for m in range(self.nmodes):
-            q_range = np.linspace(-amp, amp, npoints)
-            for i in range(npoints):
-                q = np.zeros(self.nmodes_total)
-                q[m + 6] = q_range[i]
-                transformed = self.applySpiralTransformation(q, self.pdb)
-                dcd[m *npoints+ i] = transformed.coords
+        with tempfile.TemporaryDirectory() as tmpDir:
+            pdbfile = join( tmpDir,"ref.pdb")
+            self.pdb.write_pdb(pdbfile)
+            for m in range(self.nmodes):
+                q_range = np.linspace(-amp, amp, npoints)
+                for i in range(npoints):
+                    q = np.zeros(self.nmodes_total)
+                    q[m + 6] = q_range[i]
+                    transformed = self.applySpiralTransformation(q, self.pdb)
+                    dcd[m, i] = transformed.coords
 
-        numpyArr2dcd(arr=dcd, filename=tmpDir+".dcd")
-        self.pdb.write_pdb(tmpDir+".pdb")
-
-        os.system("%s %s.pdb %s.dcd"%(VMD_PATH, tmpDir, tmpDir))
+                numpyArr2dcd(arr=dcd[m], filename=join(tmpDir,"mode%i.dcd"%(m+7)))
+            cmd_file = join(tmpDir,"cmd.cxc")
+            with open(cmd_file ,"w") as f:
+                for m in range(self.nmodes):
+                    f.write("open %s name %s \n" %(pdbfile, "mode%i"%(m+7)))
+                    f.write("open %s structureModel #%i \n" %(join(tmpDir,"mode%i.dcd"%(m+7)), m+1))
+                f.write("hide all models\n")
+                f.write("show #1 models\n")
+            run_chimerax(cmd_file)
+    # def viewVMD(self, amp, tmpDir, npoints= 10):
+    #     dcd = np.zeros((npoints*self.nmodes,self.natoms,3))
+    #
+    #     for m in range(self.nmodes):
+    #         q_range = np.linspace(-amp, amp, npoints)
+    #         for i in range(npoints):
+    #             q = np.zeros(self.nmodes_total)
+    #             q[m + 6] = q_range[i]
+    #             transformed = self.applySpiralTransformation(q, self.pdb)
+    #             dcd[m *npoints+ i] = transformed.coords
+    #
+    #     numpyArr2dcd(arr=dcd, filename=tmpDir+".dcd")
+    #     self.pdb.write_pdb(tmpDir+".pdb")
+    #
+    #     os.system("%s %s.pdb %s.dcd"%(VMD_PATH, tmpDir, tmpDir))
 
     def transform(self, angle, shift):
         rot_m_rigidR = np.zeros(self.m_rigidR.shape)
