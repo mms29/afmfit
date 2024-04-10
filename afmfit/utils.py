@@ -94,7 +94,7 @@ class DimRed:
 
     def show_pca_ev(self):
         if self.method == "pca":
-            fig, ax = plt.subplots(1, 1, figsize=(5, 3))
+            fig, ax = plt.subplots(1, 1, figsize=(5, 3), layout="constrained")
             ax.stem(np.arange(1, len(self.dimred.explained_variance_ratio_) + 1), 100 * self.dimred.explained_variance_ratio_)
             ax.set_xlabel("#PC")
             ax.set_ylabel("EV (%) ")
@@ -103,17 +103,17 @@ class DimRed:
         else:
             raise RuntimeError("Not available for UMAP")
 
-    def show(self, cval=None, ax=None, points=None, cname=None, cmap="viridis"):
+    def show(self, cval=None, ax=None, points=None, cname=None, cmap="viridis", alpha=0.8):
         if ax is None:
             ax = [0, 1]
-        fig, axp = plt.subplots(1, 1, figsize=(5, 3))
+        fig, axp = plt.subplots(1, 1, figsize=(5, 3), layout="constrained")
         if cval is not None:
-            sc = axp.scatter(self.data[:, ax[0]], self.data[:, ax[1]], c=cval, cmap=cmap)
+            sc = axp.scatter(self.data[:, ax[0]], self.data[:, ax[1]], c=cval, cmap=cmap, alpha=alpha)
             cbar = fig.colorbar(sc, ax=axp)
             if cname is not None :
                 cbar.set_label(cname)
         else:
-            axp.scatter(self.data[:, ax[0]], self.data[:, ax[1]])
+            axp.scatter(self.data[:, ax[0]], self.data[:, ax[1]], c="black", alpha=alpha)
 
         if points is not None:
             axp.plot(points[ax[0]], points[ax[1]], "o-", color="red")
@@ -125,7 +125,7 @@ class DimRed:
 
     def viewAxisChimera(self, ax=0, avg=True, method="std", n_points=5, align=False, align_ref=None, prefix=None):
         cluster, traj = self.cluster_linear(ax=ax, n_points=n_points, method=method)
-        self.show(cval=cluster, points=traj, cname="Clusters")
+        self.show(cval=np.array(cluster).astype(int), points=traj, cname="Clusters")
 
 
         if avg:
@@ -285,30 +285,30 @@ def get_angular_distance(a1, a2):
     return np.rad2deg(np.arccos((np.trace(R) - 1)/2))
 
 
-def select_points_in_sphere(points, corr, n_points, threshold, plot =False):
-
-    idx_corr = np.argsort(corr)[::-1]
-    n_sel = 1
-    candidate_idx = 0
-    idx_sel = np.array([candidate_idx])
-
-    while (n_sel < n_points):
-        cond = [threshold < angular_distance(xi, points[idx_corr[candidate_idx]]) for xi in points[idx_corr[idx_sel]]]
-        if all(cond):
-            n_sel += 1
-            idx_sel = np.concatenate((idx_sel, np.array([candidate_idx])))
-        candidate_idx += 1
-        if candidate_idx >= idx_corr.shape[0]:
-            print("Warning : number of points too large")
-            break
-
-    if plot :
-        ax = plt.figure().add_subplot(111, projection='3d')
-        ax.scatter(points[:, 0], points[:, 1], points[:, 2], c=corr, cmap="jet", vmin=np.min(corr[np.nonzero(corr)]))
-        ax.scatter(points[idx_corr[idx_sel], 0], points[idx_corr[idx_sel], 1], points[idx_corr[idx_sel], 2], s=100)
-        plt.show()
-
-    return idx_corr[idx_sel]
+# def select_points_in_sphere(points, corr, n_points, threshold, plot =False):
+#
+#     idx_corr = np.argsort(corr)[::-1]
+#     n_sel = 1
+#     candidate_idx = 0
+#     idx_sel = np.array([candidate_idx])
+#
+#     while (n_sel < n_points):
+#         cond = [threshold < angular_distance(xi, points[idx_corr[candidate_idx]]) for xi in points[idx_corr[idx_sel]]]
+#         if all(cond):
+#             n_sel += 1
+#             idx_sel = np.concatenate((idx_sel, np.array([candidate_idx])))
+#         candidate_idx += 1
+#         if candidate_idx >= idx_corr.shape[0]:
+#             print("Warning : number of points too large")
+#             break
+#
+#     if plot :
+#         ax = plt.figure().add_subplot(111, projection='3d')
+#         ax.scatter(points[:, 0], points[:, 1], points[:, 2], c=corr, cmap="jet", vmin=np.min(corr[np.nonzero(corr)]))
+#         ax.scatter(points[idx_corr[idx_sel], 0], points[idx_corr[idx_sel], 1], points[idx_corr[idx_sel], 2], s=100)
+#         plt.show()
+#
+#     return idx_corr[idx_sel]
 
 def get_sphere(angular_dist):
     num_pts = int(np.pi * 10000 * 1 / (angular_dist ** 2))
