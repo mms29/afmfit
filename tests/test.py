@@ -7,7 +7,6 @@ from afmfit.nma import NormalModesRTB
 from afmfit.simulator import AFMSimulator
 from afmfit.fitting import Fitter, ProjMatch, NMAFit
 from afmfit.viewer import viewAFM
-import polarTransform
 import multiprocessing
 
 N_CPU_TOTAL = multiprocessing.cpu_count()//2
