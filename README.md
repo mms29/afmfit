@@ -4,7 +4,7 @@ A python package for flexible fitting of AFM images
 
 ## Installation
 
-Afmfit is a python package that can be installled with pip :
+AFMfit can be installed with pip :
 
 ```
 git clone https://github.com/mms29/afmfit.git .
