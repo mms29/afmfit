@@ -1,8 +1,10 @@
-# AFMFIT 0.4
+# AFMfit 0.4
+
+A python package for flexible fitting of AFM images  
 
 ## Installation
 
-Afmfit is a python package that can be installled with pip :
+AFMfit can be installed with pip :
 
 ```
 git clone https://github.com/mms29/afmfit.git .
@@ -23,7 +25,7 @@ pip install jupyter
 ```
 The tutorial can be launched by :
 ```
-jupyter notebook /path/to/afmfit/afmfit/examples/afmfit_tuto.ipynb
+jupyter notebook /path/to/afmfit/examples/afmfit_tuto.ipynb
 ```
 
 
