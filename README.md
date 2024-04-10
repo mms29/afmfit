@@ -23,7 +23,7 @@ pip install jupyter
 ```
 The tutorial can be launched by :
 ```
-jupyter notebook /path/to/afmfit/afmfit/examples/afmfit_tuto.ipynb
+jupyter notebook /path/to/afmfit/examples/afmfit_tuto.ipynb
 ```
 
 
