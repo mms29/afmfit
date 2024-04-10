@@ -16,8 +16,8 @@ It is recommended to have ```chimerax``` installed and available in the PATH var
 
 ## Examples
 
-Examples are available in the form of Jupyter Notebooks.
-Make sure you have Jupyter installed : 
+Examples are available in the form of Jupyter notebooks.
+Make sure you have [Jupyter](https://jupyter.org/) installed : 
 ```
 pip install jupyter
 ```
