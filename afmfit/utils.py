@@ -14,6 +14,7 @@ import os
 import tempfile
 import shutil
 import warnings
+import pathlib
 
 def show_stats(fitter):
 
@@ -258,15 +259,6 @@ def translate(img, shift):
     return img_out
 
 
-def get_project_root() -> Path:
-    return Path(__file__).parent
-def get_tests_root():
-    return join(get_project_root(), "../tests")
-
-def get_tests_data():
-    return join(get_tests_root(), "tests_data")
-def get_tests_tmp():
-    return join(get_tests_root(), "tests_tmp")
 
 
 def get_cc(map1, map2):

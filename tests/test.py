@@ -1,6 +1,6 @@
 import unittest
 from afmfit.pdbio import PDB
-from afmfit.utils import get_tests_data, get_tests_tmp, get_cc, get_angular_distance
+from afmfit.utils import get_cc, get_angular_distance
 from os.path import join
 import numpy as np
 from afmfit.nma import NormalModesRTB
@@ -8,8 +8,19 @@ from afmfit.simulator import AFMSimulator
 from afmfit.fitting import Fitter, ProjMatch, NMAFit
 from afmfit.viewer import viewAFM
 import multiprocessing
+import pathlib
+import os
 
-N_CPU_TOTAL = multiprocessing.cpu_count()//2
+N_CPU_TOTAL = max([8, multiprocessing.cpu_count()//2])
+def get_tests_data():
+    return join(pathlib.Path(__file__).parent, "tests_data")
+def get_tests_tmp():
+    tests_tmp =join(pathlib.Path(__file__).parent, "tests_tmp")
+    if not os.path.exists(tests_tmp):
+        pathlib.Path(tests_tmp).mkdir()
+    return tests_tmp
+
+
 
 class TestIO(unittest.TestCase):
 
