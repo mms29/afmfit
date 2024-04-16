@@ -100,7 +100,7 @@ class TestFitting(unittest.TestCase):
 
         nmafit = NMAFit()
         nmafit.fit(img=pexp,nma=nma, simulator=sim,target_pdb=target, zshift=zshift,
-                   n_iter=5, gamma=10, gamma_rigid=5,verbose=False, plot=False)
+                   n_iter=5, lambda_f=nma.pdb.natoms/(10**2), lambda_r=nma.pdb.natoms/(5**2),verbose=False, plot=False)
         self.assertGreater(nmafit.rmsd[0], 3.0)
         self.assertLess(nmafit.rmsd[-1], 1.0)
 
@@ -222,7 +222,7 @@ class TestFitting(unittest.TestCase):
         fitter = Fitter(pdb=nma.pdb, imgs=imgs, simulator=sim, target_pdbs=targets)
         fitter.fit_rigid( n_cpu=N_CPU_TOTAL, angular_dist=10, verbose=True, zshift_range=zshift_range)
         fitter.fit_flexible( n_cpu=N_CPU_TOTAL, nma=nma, verbose=True, n_best_views=3,
-                     n_iter=10, gamma=10, gamma_rigid=3, plot=False)
+                     n_iter=10,  lambda_f=nma.pdb.natoms/(10**2), lambda_r=nma.pdb.natoms/(5**2), plot=False)
 
         for i in range(nimg):
             self.assertLess(3.0, fitter.flexible_rmsds[i,0])
