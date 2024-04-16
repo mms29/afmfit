@@ -222,7 +222,7 @@ class TestFitting(unittest.TestCase):
         fitter = Fitter(pdb=nma.pdb, imgs=imgs, simulator=sim, target_pdbs=targets)
         fitter.fit_rigid( n_cpu=N_CPU_TOTAL, angular_dist=10, verbose=True, zshift_range=zshift_range)
         fitter.fit_flexible( n_cpu=N_CPU_TOTAL, nma=nma, verbose=True, n_best_views=3,
-                     n_iter=10,  lambda_f=nma.pdb.natoms/(10**2), lambda_r=nma.pdb.natoms/(5**2), plot=False)
+                     n_iter=10,  lambda_f=nma.pdb.n_atoms/(10**2), lambda_r=nma.pdb.n_atoms/(5**2), plot=False)
 
         for i in range(nimg):
             self.assertLess(3.0, fitter.flexible_rmsds[i,0])
