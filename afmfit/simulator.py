@@ -12,6 +12,14 @@ from multiprocessing import Pool
 class AFMSimulator:
 
     def __init__(self, size, vsize, beta, sigma, cutoff, ):
+        """
+
+        :param size:
+        :param vsize:
+        :param beta:
+        :param sigma:
+        :param cutoff:
+        """
         self.size=size
         self.vsize=vsize
         self.beta=beta
@@ -82,32 +90,31 @@ class AFMSimulator:
         return ImageLibrary(imageLibrarySharedArray, nimgs = n_imgs, size= self.size, vsize=self.vsize,
                             angles = angles_z, z_shifts=z_shifts, view_group=view_group)
 
-    # def afmize(self, pdb, probe_r, probe_a, noise, prefix):
-    #     from . import AFMIZE_PATH
-    #
-    #     pdb.write_pdb(prefix + ".pdb")
-    #     pdbfn = prefix + ".pdb"
-    #
-    #     with open(prefix + ".toml", "w") as f:
-    #         f.write("file.input           = \"%s\" \n" % pdbfn)
-    #         f.write("file.output.basename = \"%s\" \n" % prefix)
-    #         f.write("file.output.formats  = [\"tsv\", \"svg\"] \n")
-    #         f.write("probe.size           = {radius = \"%.1fangstrom\", angle = %.1f} \n" % (probe_r, probe_a))
-    #         f.write("resolution.x         = \"%.3fangstrom\" \n" % self.vsize)
-    #         f.write("resolution.y         = \"%.3fangstrom\" \n" % self.vsize)
-    #         f.write("resolution.z         = \"0.1angstrom\" \n")
-    #         f.write("range.x              = [\"%.3fangstrom\", \"%.3fangstrom\"] \n" % (
-    #         -self.size * self.vsize / 2, self.size * self.vsize / 2))
-    #         f.write("range.y              = [\"%.3fangstrom\", \"%.3fangstrom\"] \n" % (
-    #         -self.size * self.vsize / 2, self.size * self.vsize / 2))
-    #         f.write("scale_bar.length     = \"5.0nm\" \n")
-    #         f.write("stage.align          = true \n")
-    #         f.write("stage.position       = 0.0 \n")
-    #         f.write("noise                = \"%.1fangstrom\" \n" % noise)
-    #
-    #     os.system("%s %s.toml" % (AFMIZE_PATH, prefix))
-    #
-    #     return np.loadtxt(prefix + ".tsv").T
+    def afmize(self, amfize_path, pdb, probe_r, probe_a, noise, prefix):
+
+        pdb.write_pdb(prefix + ".pdb")
+        pdbfn = prefix + ".pdb"
+
+        with open(prefix + ".toml", "w") as f:
+            f.write("file.input           = \"%s\" \n" % pdbfn)
+            f.write("file.output.basename = \"%s\" \n" % prefix)
+            f.write("file.output.formats  = [\"tsv\", \"svg\"] \n")
+            f.write("probe.size           = {radius = \"%.1fangstrom\", angle = %.1f} \n" % (probe_r, probe_a))
+            f.write("resolution.x         = \"%.3fangstrom\" \n" % self.vsize)
+            f.write("resolution.y         = \"%.3fangstrom\" \n" % self.vsize)
+            f.write("resolution.z         = \"0.1angstrom\" \n")
+            f.write("range.x              = [\"%.3fangstrom\", \"%.3fangstrom\"] \n" % (
+            -self.size * self.vsize / 2, self.size * self.vsize / 2))
+            f.write("range.y              = [\"%.3fangstrom\", \"%.3fangstrom\"] \n" % (
+            -self.size * self.vsize / 2, self.size * self.vsize / 2))
+            f.write("scale_bar.length     = \"5.0nm\" \n")
+            f.write("stage.align          = true \n")
+            f.write("stage.position       = 0.0 \n")
+            f.write("noise                = \"%.1fangstrom\" \n" % noise)
+
+        os.system("%s %s.toml" % (amfize_path, prefix))
+
+        return np.loadtxt(prefix + ".tsv").T
 
     def init_projLibrary_processes(self, imageLibrarySharedArray, zshiftRawArray, n_imgs,
                 n_zshifts, zero_cutoff, zshift_range, simulator, pdb,init_zshift):

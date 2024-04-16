@@ -16,18 +16,6 @@ import shutil
 import warnings
 import pathlib
 
-def show_stats(fitter):
-
-    mser  = np.sqrt(fitter.flexible_mses[:,0])
-    msef  = np.sqrt(np.min(fitter.flexible_mses, axis=1))
-    rmsd  = fitter.flexible_rmsds[(np.arange(fitter.nimgs),np.argmin(fitter.flexible_mses, axis=1))]
-    def get_pct(vr, vf):
-        return -100*vr/vf * (1- (vr/vf))
-    print("Best MSE rigid : %.2f (s %.2f)"%(mser.mean(), mser.std()) )
-    print("Best MSE flexible : %.2f (s %.2f)"%((msef ).mean(),msef.std()))
-    print("MSE decrease : %.2f %%"%(get_pct((mser).mean(),(msef ).mean())))
-    print("Best RMSD: %.2f Ang (s %.2f Ang) "%(rmsd.mean(), rmsd.std()))
-
 
 
 def align_coords(coords, ref, match=None):
@@ -274,33 +262,14 @@ def get_angular_distance(a1, a2):
     R1 = euler2matrix(a1)
     R2 = euler2matrix(a2)
     R = np.dot(R1, R2.T)
-    return np.rad2deg(np.arccos((np.trace(R) - 1)/2))
+    cosTheta = (np.trace(R) - 1) / 2
+    if cosTheta <-1.0:
+        cosTheta = -1.0
+    if cosTheta > 1.0:
+        cosTheta = 1.0
+    return    np.rad2deg(np.arccos(cosTheta))
 
 
-# def select_points_in_sphere(points, corr, n_points, threshold, plot =False):
-#
-#     idx_corr = np.argsort(corr)[::-1]
-#     n_sel = 1
-#     candidate_idx = 0
-#     idx_sel = np.array([candidate_idx])
-#
-#     while (n_sel < n_points):
-#         cond = [threshold < angular_distance(xi, points[idx_corr[candidate_idx]]) for xi in points[idx_corr[idx_sel]]]
-#         if all(cond):
-#             n_sel += 1
-#             idx_sel = np.concatenate((idx_sel, np.array([candidate_idx])))
-#         candidate_idx += 1
-#         if candidate_idx >= idx_corr.shape[0]:
-#             print("Warning : number of points too large")
-#             break
-#
-#     if plot :
-#         ax = plt.figure().add_subplot(111, projection='3d')
-#         ax.scatter(points[:, 0], points[:, 1], points[:, 2], c=corr, cmap="jet", vmin=np.min(corr[np.nonzero(corr)]))
-#         ax.scatter(points[idx_corr[idx_sel], 0], points[idx_corr[idx_sel], 1], points[idx_corr[idx_sel], 2], s=100)
-#         plt.show()
-#
-#     return idx_corr[idx_sel]
 
 def get_sphere(angular_dist):
     num_pts = int(np.pi * 10000 * 1 / (angular_dist ** 2))
@@ -325,7 +294,21 @@ def get_sphere_full(angular_dist):
             new_angles[i*n_zviews+ j, 2] =angles[i,2]
     return new_angles
 
+def select_angles(angles, n_points, threshold):
+    n_sel = 1
+    candidate_idx = 0
+    idx_sel = np.array([candidate_idx])
+    while (n_sel < n_points):
+        candidate_idx += 1
+        if candidate_idx >= angles.shape[0]:
+            print("Warning : number of points too large")
+            break
+        cond = [threshold < get_angular_distance(ai, angles[candidate_idx]) for ai in angles[idx_sel]]
+        if all(cond):
+            n_sel += 1
+            idx_sel = np.concatenate((idx_sel, np.array([candidate_idx])))
 
+    return idx_sel
 def get_points_from_angles(angles):
     points = np.zeros(angles.shape)
     for i in range(angles.shape[0]):

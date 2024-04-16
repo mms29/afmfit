@@ -1,16 +1,241 @@
+from afmfit.viewer import viewAFM, show_angular_distr
+
 from skimage.filters import gaussian
 from scipy.ndimage import binary_erosion, binary_dilation
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button, RadioButtons, TextBox
 from tiffile import imwrite, imread
-from afmfit.viewer import viewAFM, show_angular_distr
 from numba import njit
 import mrcfile
+
+class ImageSet:
+
+    def __init__(self, imgs, vsize=1.0, angles=None, shifts=None):
+        """
+        Set of images
+        :param imgs: array of nimgs * size *size
+        :param vsize: pixel size
+        :param angles: Projection angles
+        :param shifts: Projection translations
+        """
+        self.imgs = np.array(imgs, dtype=np.float32)
+        self.nimg = self.imgs.shape[0]
+        self.size = self.imgs.shape[1]
+        self.vsize = vsize
+        if angles is None:
+            self.angles = np.zeros((self.nimg, 3))
+        else:
+            self.angles=angles
+        if shifts is None:
+            self.shifts = np.zeros((self.nimg, 3))
+        else:
+            self.shifts=shifts
+    @classmethod
+    def read_tif(cls, file, vsize=1.0, unit='nm'):
+        """
+        Read a set of images in a TIF file
+        :param file: TIF file
+        :param vsize: pixel size
+        :param unit: unit of the z scale
+        :return: set of images
+        """
+        arr = imread(file).astype(np.float32)
+        img = cls.arr2img(arr, unit)
+
+        print("Read %i images of size %i x %i "%img.shape)
+        return cls(img, vsize)
+    @classmethod
+    def read_mrc(cls, file, vsize=1.0, unit='nm'):
+        """
+        Read a set of images in a MRC file
+        :param file: MRC file
+        :param vsize: pixel size
+        :param unit: unit of the z scale
+        :return: Set of images
+        """
+        with mrcfile.open(file) as mrc:
+            arr = np.array(mrc.data, dtype=np.float32)
+        img = cls.arr2img(arr, unit)
+
+        print("Read %i images of size %i x %i "%img.shape)
+        return cls(img, vsize)
+
+    def write_tif(self, file, unit = "nm"):
+        """
+        Write a set of images to TIF format
+        :param file: TIF file to write
+        :param unit: Unit of the z scale
+        """
+        arr = self.img2arr(self.imgs, unit)
+        imwrite(file, arr)
+
+    def write_mrc(self, file, unit = "nm"):
+        """
+        Write a set of images to MRC format
+        :param file: MRC file to write
+        :param unit: Unit of the z scale
+        """
+        arr = self.img2arr(self.imgs, unit)
+        with mrcfile.new(file, overwrite=True) as mrc:
+            mrc.set_data(arr)
+            mrc.voxel_size = self.vsize
+            mrc.update_header_from_data()
+            mrc.update_header_stats()
+
+    def get_imgs(self):
+        """
+        Get the set of images
+        :return: array of nimgs * size *size
+        """
+        return self.imgs
+
+    @classmethod
+    def arr2img(self, arr, unit):
+        """
+        Convert an read array to a set of images in Ang
+        :param arr: array of nimgs * size *size
+        :param unit: unit of the z scale
+        :return: array of nimg *size *size witht the set of images
+        """
+        if len(arr.shape) ==2:
+            img = np.array([arr], dtype=np.float32)
+        else:
+            img = np.array(arr, dtype=np.float32)
+        if unit == "m" or unit == "meter":
+            img*= 1.0e10
+        if unit == "mm" or unit == "millimeter":
+            img*= 1.0e7
+        if unit == "um" or unit == "micrometer":
+            img*= 1.0e4
+        if unit == "nm" or unit == "nanometer":
+            img*= 10.0
+        elif unit == "ang"or unit == "angstrom":
+            img*= 1.0
+        img = img.transpose(0,2,1)[:,:,::-1]
+        return img
+    @classmethod
+    def img2arr(self, imgs, unit):
+        """
+        Convert the set of images in Ang to a writable array
+        :param imgs: array of nimg * size *size
+        :param unit: unit of the z scale
+        :return: array
+        """
+        arr = np.array(imgs, dtype=np.float32)
+        if unit == "m" or unit == "meter":
+            arr/= 1.0e10
+        if unit == "mm" or unit == "millimeter":
+            arr/= 1.0e7
+        if unit == "um" or unit == "micrometer":
+            arr/= 1.0e4
+        if unit == "nm" or unit == "nanometer":
+            arr/= 10.0
+        elif unit == "ang"or unit == "angstrom":
+            arr/= 1.0
+        arr = arr[:,:,::-1].transpose(0,2,1)
+        return arr
+
+    def show(self, **kwargs):
+        """
+        Show the images
+        :param kwargs:
+        """
+        viewAFM(self.imgs, interactive=True,**kwargs)
+
+    def show_angular_distr(self, **kwargs):
+        """
+        Show the angular distribution of the images
+        :param kwargs:
+        """
+        show_angular_distr(self.angles,**kwargs)
+
+class ImageLibrary:
+
+    def __init__(self, imgRawArray, nimgs, size, vsize, view_group=None, angles=None, z_shifts=None):
+        """
+        Set of Images representing a projection library
+
+        :param imgRawArray: Raw array containing the images
+        :param nimgs: number of images
+        :param size: number of pixels in a row/col
+        :param vsize: pixel size
+        :param view_group: view group of in plan rotation
+        :param angles: projection angles
+        :param z_shifts: projection z shift
+        """
+        self.imgRawArray = imgRawArray
+        self.nimgs = nimgs
+        self.size = size
+        self.vsize = vsize
+        self.angles = angles
+        self.z_shifts = z_shifts
+        self.norm2 = self.calculate_norm(self.get_imgs())
+        if view_group is None:
+            self.ngroup = None
+            self.nview = None
+        else:
+            self.nview, self.ngroup = view_group.shape
+        self.view_group = view_group
+
+    def get_imgs(self):
+        """
+        Get the images from the set
+        :return: array of nimgs * size *size
+        """
+        return np.frombuffer(self.imgRawArray, dtype=np.float32,
+                               count=len(self.imgRawArray)).reshape(self.nimgs, self.size,self.size)
+
+    def get_img(self, index):
+        """
+        Get of image from the set
+        :param index: index of the desired image
+        :return: array of size *size with the image
+        """
+        return self.get_imgs()[index]
+
+    def calculate_norm(self, imgs):
+        """
+        Calculate the l2 norm of the images
+        :param imgs:
+        :return:
+        """
+        return calculate_norm_njit(imgs)
+    def show(self, **kwargs):
+        """
+        Show the set of images
+        :param kwargs:
+        """
+        viewAFM(self.get_imgs(), interactive=True, **kwargs)
+
+    def show_angular_distr(self, **kwargs):
+        """
+        Show the angular distribution fo the images
+        :param kwargs:
+        """
+        show_angular_distr(self.angles, **kwargs)
+
+@njit
+def calculate_norm_njit(imgs):
+    """
+    Fast calculation of the l2 norm of a set of images
+    :param imgs:
+    :return:
+    """
+    nimg = imgs.shape[0]
+    norm2 = np.zeros(nimg)
+    for i in range(nimg):
+        norm2[i] = np.sum(np.square(imgs[i]))
+    return norm2
 
 
 
 def mask_interactive(stk):
+    """
+    Mask a set of images with interactive plot
+    :param stk: array of nimgs * size *size
+    :return: binary array of nimgs* size *size
+    """
     vinit =0
     mask = mask_stk(stk, itere=2, iterd=2, threshold=30.0, sigma=1.0)
 
@@ -84,20 +309,17 @@ def mask_interactive(stk):
     plt.show(block=True)
     return mask_stk(stk, itere=itere.val, iterd=iterd.val, threshold=thres.val, sigma=sigma.val)
 
-# class AFMImage:
-#     def __init__(self, img, vsize):
-#         self.img = img
-#         self.vsize = vsize
-#
-#
-#     @classmethod
-#     def from_mrc(cls, filename):
-#         pass
-#     @classmethod
-#     def from_tif(cls, filename):
-#         pass
 
 def mask_stk(stk, itere = 1, iterd = 2,threshold = 40.0,sigma = 1.0) :
+    """
+    Mask a set of images
+    :param stk: array of nimgs * size *size
+    :param itere: number of erosion iterations
+    :param iterd: number of dilatations iterations
+    :param threshold: Cutoff threshold in Ang
+    :param sigma: Sigma of the Gaussian filter
+    :return: binary array of nimgs* size *size
+    """
     mask_stk = np.zeros(stk.shape)
     for i in range(stk.shape[0]):
         g = gaussian(stk[i], sigma=sigma)
@@ -106,133 +328,3 @@ def mask_stk(stk, itere = 1, iterd = 2,threshold = 40.0,sigma = 1.0) :
         binary_mask = binary_dilation(binary_mask, iterations=iterd)
         mask_stk[i] = binary_mask
     return mask_stk
-
-class ImageSet:
-
-    def __init__(self, imgs, vsize=1.0, angles=None, shifts=None):
-        self.imgs = np.array(imgs, dtype=np.float32)
-        self.nimg = self.imgs.shape[0]
-        self.size = self.imgs.shape[1]
-        self.vsize = vsize
-        if angles is None:
-            self.angles = np.zeros((self.nimg, 3))
-        else:
-            self.angles=angles
-        if shifts is None:
-            self.shifts = np.zeros((self.nimg, 3))
-        else:
-            self.shifts=shifts
-    @classmethod
-    def read_tif(cls, file, vsize=1.0, unit='nm'):
-        arr = imread(file).astype(np.float32)
-        img = cls.arr2img(arr, unit)
-
-        print("Read %i images of size %i x %i "%img.shape)
-        return cls(img, vsize)
-    @classmethod
-    def read_mrc(cls, file, vsize=1.0, unit='nm'):
-        with mrcfile.open(file) as mrc:
-            arr = np.array(mrc.data, dtype=np.float32)
-        img = cls.arr2img(arr, unit)
-
-        print("Read %i images of size %i x %i "%img.shape)
-        return cls(img, vsize)
-
-    def write_tif(self, file, unit = "nm"):
-        arr = self.img2arr(self.imgs, unit)
-        imwrite(file, arr)
-
-    def write_mrc(self, file, unit = "nm"):
-        arr = self.img2arr(self.imgs, unit)
-        with mrcfile.new(file, overwrite=True) as mrc:
-            mrc.set_data(arr)
-            mrc.voxel_size = self.vsize
-            mrc.update_header_from_data()
-            mrc.update_header_stats()
-
-    def get_imgs(self):
-        return self.imgs
-
-    @classmethod
-    def arr2img(self, arr, unit):
-        if len(arr.shape) ==2:
-            img = np.array([arr], dtype=np.float32)
-        else:
-            img = np.array(arr, dtype=np.float32)
-        if unit == "m" or unit == "meter":
-            img*= 1.0e10
-        if unit == "mm" or unit == "millimeter":
-            img*= 1.0e7
-        if unit == "um" or unit == "micrometer":
-            img*= 1.0e4
-        if unit == "nm" or unit == "nanometer":
-            img*= 10.0
-        elif unit == "ang"or unit == "angstrom":
-            img*= 1.0
-        img = img.transpose(0,2,1)[:,:,::-1]
-        return img
-    @classmethod
-    def img2arr(self, imgs, unit):
-        arr = np.array(imgs, dtype=np.float32)
-        if unit == "m" or unit == "meter":
-            arr/= 1.0e10
-        if unit == "mm" or unit == "millimeter":
-            arr/= 1.0e7
-        if unit == "um" or unit == "micrometer":
-            arr/= 1.0e4
-        if unit == "nm" or unit == "nanometer":
-            arr/= 10.0
-        elif unit == "ang"or unit == "angstrom":
-            arr/= 1.0
-        arr = arr[:,:,::-1].transpose(0,2,1)
-        return arr
-
-    def show(self, **kwargs):
-        viewAFM(self.imgs, interactive=True,**kwargs)
-
-    def show_angular_distr(self, **kwargs):
-        show_angular_distr(self.angles,**kwargs)
-
-class ImageLibrary:
-
-    def __init__(self, imgRawArray, nimgs, size, vsize, view_group=None, angles=None, z_shifts=None):
-        self.imgRawArray = imgRawArray
-        self.nimgs = nimgs
-        self.size = size
-        self.vsize = vsize
-        self.angles = angles
-        self.z_shifts = z_shifts
-        self.norm2 = self.calculate_norm(self.get_imgs())
-        if view_group is None:
-            self.ngroup = None
-            self.nview = None
-        else:
-            self.nview, self.ngroup = view_group.shape
-        self.view_group = view_group
-
-    def get_imgs(self):
-        return np.frombuffer(self.imgRawArray, dtype=np.float32,
-                               count=len(self.imgRawArray)).reshape(self.nimgs, self.size,self.size)
-
-    def get_img(self, index):
-        return self.get_imgs()[index]
-    # return frombuffer(self.imgRawArray, offset=index*self.size*self.size*4, dtype=np.float32,
-                     #count=self.size*self.size).reshape(self.size,self.size)
-
-    def calculate_norm(self, imgs):
-        return calculate_norm_njit(imgs)
-    def show(self, **kwargs):
-        viewAFM(self.get_imgs(), interactive=True, **kwargs)
-
-    def show_angular_distr(self, **kwargs):
-        show_angular_distr(self.angles, **kwargs)
-
-@njit
-def calculate_norm_njit(imgs):
-    nimg = imgs.shape[0]
-    norm2 = np.zeros(nimg)
-    for i in range(nimg):
-        norm2[i] = np.sum(np.square(imgs[i]))
-    return norm2
-
-

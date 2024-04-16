@@ -11,6 +11,16 @@ import tempfile
 
 class NormalModesRTB:
     def __init__(self,pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com):
+        """
+        Normal modes RTB using NOLB
+        :param pdb: Initial model
+        :param linear_modes: Linear NMA
+        :param m_rigidT: rigid translations of the RTBs
+        :param m_rigidR: rigid rotations of the RTBs
+        :param mapping: Mapping RTB to all atom
+        :param mapping_len: Mapping length
+        :param com: Centers of mass of the RTB
+        """
         self.pdb = pdb
         self.linear_modes = linear_modes
         self.m_rigidT = m_rigidT
@@ -23,7 +33,12 @@ class NormalModesRTB:
         self.nmodes = self.nmodes_total -6
         self.nrtb = len(com)
 
-    def select_modes(self, idx):
+    def select_modes(self, idx:int):
+        """
+        Select modes
+        :param idx: list of indexes
+        """
+        idx = np.array(idx)
         self.linear_modes = self.linear_modes[idx]
         self.m_rigidT = self.m_rigidT[:,idx]
         self.m_rigidR = self.m_rigidR[:,idx]
@@ -32,7 +47,12 @@ class NormalModesRTB:
 
 
     @classmethod
-    def read_NMA(cls, prefix):
+    def read_NMA(cls, prefix:str):
+        """
+        Read NMA files from NOLB from the "--format 3" option
+        :param prefix: prefix of the NOLB files
+        :return: NormalModesRTB
+        """
         pdb = PDB(prefix+".pdb")
         m_rigidR, m_rigidT, com = cls._read_rtb(prefix + "_rtb.txt")
         mapping, mapping_len = cls._read_mapping(prefix + "_rtb-mapping.txt")
@@ -40,7 +60,16 @@ class NormalModesRTB:
         return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com)
 
     @classmethod
-    def calculate_NMA(cls, pdb, nmodes, prefix=None, cutoff=8.0, options=""):
+    def calculate_NMA(cls, pdb, nmodes, prefix = None, cutoff = 8.0, options = ""):
+        """
+        Calculate NMA with NOLB
+        :param pdb: Atomic model PDB
+        :param nmodes: number of modes
+        :param prefix: output prefix
+        :param cutoff: cutoff distance (Ang)
+        :param options:  other options to pass to NOLB
+        :return: NormalModesRTB
+        """
         with tempfile.TemporaryDirectory() as tmpDir :
             tmpPrefix = join(tmpDir, "")
             if prefix is not None:
@@ -66,6 +95,11 @@ class NormalModesRTB:
         return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com)
 
     def viewChimera(self, amp=1000, npoints= 10):
+        """
+        Show modes in ChimeraX
+        :param amp: Amplitude
+        :param npoints: number of trajectory points
+        """
         dcd = np.zeros((self.nmodes, npoints, self.natoms,3))
 
         with tempfile.TemporaryDirectory() as tmpDir:
@@ -88,23 +122,14 @@ class NormalModesRTB:
                 f.write("hide all models\n")
                 f.write("show #1 models\n")
             run_chimerax(cmd_file)
-    # def viewVMD(self, amp, tmpDir, npoints= 10):
-    #     dcd = np.zeros((npoints*self.nmodes,self.natoms,3))
-    #
-    #     for m in range(self.nmodes):
-    #         q_range = np.linspace(-amp, amp, npoints)
-    #         for i in range(npoints):
-    #             q = np.zeros(self.nmodes_total)
-    #             q[m + 6] = q_range[i]
-    #             transformed = self.applySpiralTransformation(q, self.pdb)
-    #             dcd[m *npoints+ i] = transformed.coords
-    #
-    #     numpyArr2dcd(arr=dcd, filename=tmpDir+".dcd")
-    #     self.pdb.write_pdb(tmpDir+".pdb")
-    #
-    #     os.system("%s %s.pdb %s.dcd"%(VMD_PATH, tmpDir, tmpDir))
 
     def transform(self, angle, shift):
+        """
+        Rigid transformation of the modes
+        :param angle: three Euler angles for 3D rotation
+        :param shift: three translations
+        :return: Transformed NormalModesRTB
+        """
         rot_m_rigidR = np.zeros(self.m_rigidR.shape)
         rot_m_rigidT = np.zeros(self.m_rigidT.shape)
         rot_linear_modes = np.zeros(self.linear_modes.shape)
@@ -180,7 +205,15 @@ class NormalModesRTB:
 
         return mapping_arr, mapping_len
 
-    def applySpiralTransformation(self, eta, pdb):
+    def applySpiralTransformation(self, eta, pdb=None):
+        """
+        Apply spiral (nonlinear) transformation
+        :param eta: array of n_modes_total with the amplitudes
+        :param pdb: PDB on which the transformation is applied
+        :return: PDB
+        """
+        if pdb is None:
+            pdb=self.pdb
         transformed_pdb = pdb.copy()
         new_coords = applySpiralTransformation_njit(eta, transformed_pdb.coords,
             nmodes= self.nmodes, nmodes_total= self.nmodes_total, nrtb= self.nrtb, linear_modes= self.linear_modes,
@@ -188,7 +221,15 @@ class NormalModesRTB:
         transformed_pdb.coords = new_coords
         return transformed_pdb
 
-    def applyLinearTransformation(self, eta, pdb):
+    def applyLinearTransformation(self, eta, pdb=None):
+        """
+        Apply slinear transformation
+        :param eta: array of n_modes_total with the amplitudes
+        :param pdb: PDB on which the transformation is applied
+        :return:PDB
+        """
+        if pdb is None:
+            pdb=self.pdb
         transformed_pdb = pdb.copy()
         for i in range(pdb.n_atoms):
             transformed_pdb.coords[i] = pdb.coords[i] + np.dot(eta, self.linear_modes[:,i])

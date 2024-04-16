@@ -2,41 +2,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.widgets import Slider, Button, TextBox
 
-def show_fe(data, size, interpolate=None, cmap="jet"):
-    xmin = np.min(data[:, 0])
-    xmax = np.max(data[:, 0])
-    ymin = np.min(data[:, 1])
-    ymax = np.max(data[:, 1])
-    xm = (xmax - xmin) * 0.1
-    ym = (ymax - ymin) * 0.1
-    xmin -= xm
-    xmax += xm
-    ymin -= ym
-    ymax += ym
-    x = np.linspace(xmin, xmax, size)
-    y = np.linspace(ymin, ymax, size)
-    count = np.zeros((size, size))
-    for i in range(data.shape[0]):
-        count[np.argmin(np.abs(x.T - data[i, 0])),
-        np.argmin(np.abs(y.T - data[i, 1]))] += 1
-    img = -np.log(count / count.max())
-    img[img == np.inf] = img[img != np.inf].max()
-
-    fig, ax = plt.subplots(1,1)
-    if interpolate is not None:
-        im = ax.imshow(img.T[::-1, :],
-                       cmap=cmap, interpolation=interpolate,
-                       extent=[xmin, xmax, ymin, ymax])
-    else:
-        xx, yy = np.mgrid[xmin:xmax:size * 1j, ymin:ymax:size * 1j]
-        im = ax.contourf(xx, yy, img, cmap=cmap, levels=12)
-    #
-    cbar = fig.colorbar(im)
-    cbar.set_label("$\Delta G / k_{B}T$")
-    fig.show()
-
-
 def viewAFM(img, vsize=1.0, interactive=False, interpolate=None):
+    """
+    Display an AFM image or set of images
+    :param img: Images or set of images
+    :param vsize: pixel size
+    :param interactive: if true, the images are shown one by one in an interactive plot
+    :param interpolate: if defined, performs the interpolation (e.g. "spline36", "bicubic", "bilinear")
+    :return: Matplotlib figure, axes
+    """
     if isinstance(img , list):
         nimg = len(img)
     else:
@@ -46,7 +20,7 @@ def viewAFM(img, vsize=1.0, interactive=False, interpolate=None):
             nimg = 1
             img = [img]
     max_amp = max([img[i].max() for i in range(nimg)])/10.0
-    if not interactive :
+    if not interactive and nimg <10 :
         fig, ax = plt.subplots(1, nimg, figsize = (5*nimg,4))
         if nimg == 1:
             extent = (vsize * img[0].shape[0]) /10.0
@@ -117,6 +91,14 @@ def viewAFM(img, vsize=1.0, interactive=False, interpolate=None):
     return fig, ax
 
 def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
+    """
+    Display results of a fitting
+    :param fitter: Fitter instance to display
+    :param pca: PCA data if available
+    :param interpolate:  if defined, performs the interpolation (e.g. "spline36", "bicubic", "bilinear")
+    :param diff_range: Range in Ang of the difference plot (automated if not defined)
+    :return: matplotlib Figure
+    """
     stk1 = fitter.rigid_imgs
     stk2 = fitter.flexible_imgs
     stk_est = fitter.imgs
@@ -331,6 +313,9 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
 class FittingPlotter:
 
     def __init__(self):
+        """
+        DEPRECATED
+        """
         self.fig = None
         self.ax = None
         self.imgf_p = None
@@ -445,6 +430,15 @@ class FittingPlotter:
         self.fig.canvas.flush_events()
 
 def show_angular_distr(angles, color=None, cmap = "jet", proj = "hammer", cbar = False, vmax=None):
+    """
+    Display a flatten projection of angular distribution of a set of Euler angles in the sphere
+    :param angles: set of angles N * 3
+    :param color: array of N with values to assign to each set fo angle
+    :param cmap: colormap (e.g. "viridis")
+    :param proj: projection method (e.g. "hammer", "lambert")
+    :param cbar: If True, show the colorbar
+    :param vmax: Maximum value for the colorbar
+    """
     a1 = (np.deg2rad(angles[:,0])-np.pi)%(2*np.pi) -np.pi
     a2 = (np.deg2rad(angles[:,1])-np.pi)%(2*np.pi) -np.pi
     a3 = (np.deg2rad(angles[:,2])-np.pi)%(2*np.pi) -np.pi
@@ -472,3 +466,37 @@ def show_angular_distr(angles, color=None, cmap = "jet", proj = "hammer", cbar =
         fig.colorbar(im2, ax=ax)
 
     plt.show()
+
+# def show_fe(data, size, interpolate=None, cmap="jet"):
+#     xmin = np.min(data[:, 0])
+#     xmax = np.max(data[:, 0])
+#     ymin = np.min(data[:, 1])
+#     ymax = np.max(data[:, 1])
+#     xm = (xmax - xmin) * 0.1
+#     ym = (ymax - ymin) * 0.1
+#     xmin -= xm
+#     xmax += xm
+#     ymin -= ym
+#     ymax += ym
+#     x = np.linspace(xmin, xmax, size)
+#     y = np.linspace(ymin, ymax, size)
+#     count = np.zeros((size, size))
+#     for i in range(data.shape[0]):
+#         count[np.argmin(np.abs(x.T - data[i, 0])),
+#         np.argmin(np.abs(y.T - data[i, 1]))] += 1
+#     img = -np.log(count / count.max())
+#     img[img == np.inf] = img[img != np.inf].max()
+# 
+#     fig, ax = plt.subplots(1,1)
+#     if interpolate is not None:
+#         im = ax.imshow(img.T[::-1, :],
+#                        cmap=cmap, interpolation=interpolate,
+#                        extent=[xmin, xmax, ymin, ymax])
+#     else:
+#         xx, yy = np.mgrid[xmin:xmax:size * 1j, ymin:ymax:size * 1j]
+#         im = ax.contourf(xx, yy, img, cmap=cmap, levels=12)
+#     #
+#     cbar = fig.colorbar(im)
+#     cbar.set_label("$\Delta G / k_{B}T$")
+#     fig.show()
+
