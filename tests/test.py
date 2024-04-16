@@ -100,7 +100,7 @@ class TestFitting(unittest.TestCase):
 
         nmafit = NMAFit()
         nmafit.fit(img=pexp,nma=nma, simulator=sim,target_pdb=target, zshift=zshift,
-                   n_iter=5, lambda_f=nma.pdb.natoms/(10**2), lambda_r=nma.pdb.natoms/(5**2),verbose=False, plot=False)
+                   n_iter=5, lambda_f=nma.pdb.n_atoms/(10**2), lambda_r=nma.pdb.n_atoms/(5**2),verbose=False, plot=False)
         self.assertGreater(nmafit.rmsd[0], 3.0)
         self.assertLess(nmafit.rmsd[-1], 1.0)
 
