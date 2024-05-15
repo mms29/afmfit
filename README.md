@@ -25,7 +25,7 @@ pip3 install jupyter
 ```
 The tutorial can be launched by :
 ```
-python3 -m notebook examples/afmfit_tuto.ipynb
+python3 -m notebook /path/to/afmfit/examples/afmfit_tuto.ipynb
 ```
 
 
