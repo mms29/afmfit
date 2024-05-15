@@ -1,3 +1,18 @@
+#     AFMfit - Fitting package for Atomic Force Microscopy data
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
 import afmfit
 
 import math
@@ -15,7 +30,7 @@ import tempfile
 import shutil
 import warnings
 import pathlib
-
+import platform
 
 
 def align_coords(coords, ref, match=None):
@@ -444,4 +459,7 @@ def run_chimerax(args=""):
         raise RuntimeError("ChimeraX not found")
 
 def get_nolb_path():
-    return join(afmfit.__path__[0], join("nolb", "NOLB"))
+    if platform.system() == 'Linux':
+        return join(afmfit.__path__[0], join("nolb", "NOLB"))
+    elif platform.system() == 'Darwin':
+        return join(afmfit.__path__[0], join("nolb", "NOLB_macOS"))

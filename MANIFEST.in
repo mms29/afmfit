@@ -1,6 +1,7 @@
-include afmfit/examples/*ipynb
-include afmfit/examples/examples_data/*
-include afmfit/tests/*py
-include afmfit/tests/tests_data/*
-include afmfit/tests/tests_tmp/
+include examples/*ipynb
+include examples/examples_data/*
+include tests/*py
+include tests/tests_data/*
+include tests/tests_tmp/
 include afmfit/nolb/NOLB
+include afmfit/nolb/NOLB_macOS
