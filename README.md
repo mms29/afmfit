@@ -4,16 +4,16 @@ A python package for flexible fitting of AFM images
 
 ## Installation
 
-AFMfit can be installed with pip :
+AFMfit can be installed with _pip_ package manager :
 
 ```
-git clone https://github.com/mms29/afmfit.git .
+git clone https://gricad-gitlab.univ-grenoble-alpes.fr/GruLab/afmfit.git .
 pip3 install afmfit
 ```
 
 **Recommendation :**
 
-Afmfit uses [ChimeraX](https://www.cgl.ucsf.edu/chimerax) for molecular visualizations. 
+AFMfit uses [ChimeraX](https://www.cgl.ucsf.edu/chimerax) for molecular visualizations. 
 It is recommended to have ```chimerax``` installed and available in the PATH variable. 
 
 ## Examples
@@ -25,7 +25,7 @@ pip3 install jupyter
 ```
 The tutorial can be launched by :
 ```
-python3 -m notebook /path/to/afmfit/examples/afmfit_tuto.ipynb
+python3 -m notebook examples/afmfit_tuto.ipynb
 ```
 
 
