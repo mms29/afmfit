@@ -7,7 +7,7 @@ A python package for flexible fitting of AFM images
 AFMfit can be installed with _pip_ package manager :
 
 ```
-git clone https://gricad-gitlab.univ-grenoble-alpes.fr/GruLab/afmfit.git .
+git clone https://gricad-gitlab.univ-grenoble-alpes.fr/GruLab/afmfit.git
 pip3 install afmfit
 ```
 
