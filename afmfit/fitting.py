@@ -36,11 +36,12 @@ class ProjMatch:
         self.best_mse = None
         self.best_fitted_img = None
 
-    def run(self, library,  verbose=True):
+    def run(self, library,  verbose=True, select_view_group=True):
         """
         Run projection matching
         :param library: ImageLibrary projection library
         :param verbose:
+        :param select_view_group: if True, returns the min MSE angles and shifts for each view group
         """
         img_exp = self.img
         img_exp_norm = np.sum(np.square(img_exp))
@@ -55,7 +56,8 @@ class ProjMatch:
             _x, _y, _c = self.trans_match(library.get_img(i),  img_exp)
 
             # calculate mse from correlation
-            mse[i] = library.norm2[i] + img_exp_norm -2*_c
+            # mse[i] = library.norm2[i] + img_exp_norm -2*_c
+            mse[i] = np.sum(np.square(library.get_img(i))) + img_exp_norm -2*_c
 
             # set the shifts
             shifts[i,0] =_x *  self.vsize
@@ -63,8 +65,11 @@ class ProjMatch:
             shifts[i,2] =library.z_shifts[i]
 
         # select the best MSE for each view group
-        min_mse_group = library.view_group[
-            (np.arange(library.nview), np.argmin(mse[library.view_group], axis=1))]
+        if select_view_group:
+            min_mse_group = library.view_group[
+                (np.arange(library.nview), np.argmin(mse[library.view_group], axis=1))]
+        else:
+            min_mse_group = np.arange(nimgs)
         self.shifts = shifts[min_mse_group]
         self.mse = mse[min_mse_group]
         self.angles = library.angles[min_mse_group]
@@ -77,7 +82,7 @@ class ProjMatch:
         fit.rotate(self.best_angle)
         fit.translate(self.best_shift)
         img = self.simulator.pdb2afm(fit, 0.0)
-        best_mse_calc = mse[minmse]
+        best_mse_calc = self.mse[minmse]
         self.best_mse = np.sum(np.square( img - img_exp))
         self.best_fitted_img = img
 
@@ -86,19 +91,20 @@ class ProjMatch:
             print("Calculated MSE : %f"%np.sqrt(best_mse_calc))
             print("Actual MSE : %f"%np.sqrt(self.best_mse))
 
-    def show(self, library, n_plot=3):
+    def show(self, n_plot=3):
         """
-        DEPRECATED, Show the n_plot first fitted images
-        :param library: projection library
+        Show the n_plot first fitted images
         :param n_plot: number of images to show
         """
         fig, ax = plt.subplots(n_plot, 5, figsize=(20, 15))
 
         minmse = np.argsort(self.mse)
         for i in range(n_plot):
-            pest = library.imgs[minmse[i]]
-            pest = translate(pest, self.shifts[minmse[i], :2] / self.simulator.vsize)
-            mse = self.mse[minmse[i]]
+            fit = self.pdb.copy()
+            fit.rotate(self.angles[minmse[i]])
+            fit.translate(self.shifts[minmse[i]])
+            pest = self.simulator.pdb2afm(fit, 0.0)
+            mse = np.linalg.norm(pest - self.img)
             ax[i, 0].imshow(pest.T, cmap="afmhot", origin="lower")
             ax[i, 1].imshow(self.img.T, cmap="afmhot", origin="lower")
             ax[i, 2].imshow(np.abs(self.img.T - pest.T), cmap="jet", origin="lower")
@@ -106,7 +112,7 @@ class ProjMatch:
             ax[i, 3].plot(self.img[self.size // 2], color="tab:blue")
             ax[i, 4].plot(pest[:, self.size // 2], color="tab:red")
             ax[i, 4].plot(self.img[:, self.size // 2], color="tab:blue")
-            ax[i, 0].set_title('Fitted [%.2f]' % (np.sqrt(mse)))
+            ax[i, 0].set_title('Fitted [%.2f]' % (mse))
             ax[i, 1].set_title('Input')
             ax[i, 2].set_title('Diff')
     def show_angular_distr(self):
@@ -124,9 +130,9 @@ class ProjMatch:
         :return: shiftx, shifty, correlatino
         """
         size = img1.shape[0]
-        img1_ft = np.fft.fftn(img1)
-        img2_ft = np.fft.fftn(img2)
-        corr  = np.fft.ifftn(img1_ft * np.conjugate(img2_ft)).real
+        img1_ft = np.fft.rfftn(img1)
+        img2_ft = np.fft.rfftn(img2)
+        corr  = np.fft.irfftn(img1_ft * np.conjugate(img2_ft)).real
         shiftx = np.argmax(corr.sum(axis=1))
         shifty = np.argmax(corr.sum(axis=0))
         if shiftx>= size//2:
@@ -322,6 +328,7 @@ class Fitter:
         self.rigid_mses = None
         self.rigid_imgs = None
         self.rigid_time = None
+        self.rigid_done = False
 
         #Flexible outputs
         self.flexible_angles = None
@@ -332,6 +339,7 @@ class Fitter:
         self.flexible_coords = None
         self.flexible_imgs = None
         self.flexible_time = None
+        self.flexible_done = False
 
 
     def dump(self, file):
@@ -365,13 +373,19 @@ class Fitter:
         """
         return self.flexible_rmsds[(np.arange(self.nimgs), np.argmin(self.flexible_mses, axis=1))]
 
-    def fit_rigid(self, n_cpu, angular_dist=10.0, verbose=False, zshift_range=None):
+    def fit_rigid(self, n_cpu, angular_dist=10.0, verbose=False, zshift_range=None,
+                  init_zshift=None, near_angle=None, near_angle_cutoff=None, select_view_group = True, true_zshift=True):
         """
         Performs the rigid fitting on the set of images
         :param n_cpu: Number of CPUs
         :param angular_dist: Angular distance between projection images
         :param verbose:
         :param zshift_range: Range of shfits in the z-axis
+        :param init_zshift: Z shift of the center of mass of the model (Ang)
+        :param near_angle: three Euler angles. Restrict the projection matching to the neighborhood of specified angle
+        :param near_angle_cutoff: Maximum angular distance (°) to restrict the projection matching around the specified angle
+        :param select_view_group: if True, returns the min MSE angles and shifts for each view group
+        :param true_zshift: if False, the z shift are estimated by shifting the entire image (faster but less accurate)
         """
         dt = time.time()
 
@@ -381,9 +395,13 @@ class Fitter:
 
         # create library
         library = self.simulator.project_library(n_cpu=n_cpu, pdb=self.pdb,  angular_dist=angular_dist, verbose=verbose,
-                    zshift_range=zshift_range)
+                    zshift_range=zshift_range, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff,
+                                                 init_zshift=init_zshift, true_zshift=true_zshift)
 
-        nview = library.nview
+        if select_view_group:
+            nview = library.nview
+        else:
+            nview = library.nimgs
 
         workdata=[]
         for i in range(self.nimgs):
@@ -398,7 +416,7 @@ class Fitter:
 
         # run
         p = Pool(n_cpu, initializer=self.init_rigid_processes, initargs=(library, anglesRawArray,
-                    shiftsRawArray,msesRawArray,imgsRawArray, self.nimgs, nview, self.simulator.size))
+                    shiftsRawArray,msesRawArray,imgsRawArray, self.nimgs, nview, self.simulator.size,select_view_group))
         for _ in tqdm.tqdm(p.imap_unordered(self.run_rigid_processes, workdata), total=len(workdata),
                            desc="Projection Matching", disable=not verbose):
             pass
@@ -416,6 +434,7 @@ class Fitter:
         self.rigid_imgs = frombuffer(imgsRawArray, dtype=np.float32,
                                    count=len(imgsRawArray)).reshape(self.nimgs,self.simulator.size,self.simulator.size)
         self.rigid_time = time.time() - dt
+        self.rigid_done = True
 
 
     def fit_flexible(self, n_cpu, nma, verbose=False, n_best_views=20,dist_views=20,
@@ -433,7 +452,7 @@ class Fitter:
         :param plot: DEPRECATED
         """
         dt = time.time()
-        if self.rigid_mses is None:
+        if not self.rigid_done:
             raise RuntimeError("Perform rigid fitting first")
 
         # Arrays
@@ -484,15 +503,17 @@ class Fitter:
             self.flexible_angles[i] = matrix2euler(R.T)
             self.flexible_shifts[i] = t
         self.flexible_time = time.time() - dt
+        self.flexible_done=True
 
 
     def init_rigid_processes(self, library,anglesRawArray,shiftsRawArray, msesRawArray,imgsRawArray, nimgs,
-                                 nview,size):
+                                 nview,size, select_view_group):
         global library_global
         global angles_global
         global shifts_global
         global mses_global
         global imgs_global
+        global select_view_group_global
         library_global = library
 
         angles_global = frombuffer(anglesRawArray, dtype=np.float64,
@@ -504,6 +525,7 @@ class Fitter:
                                    count=len(msesRawArray)).reshape(nimgs,nview)
         imgs_global = frombuffer(imgsRawArray, dtype=np.float32,
                                    count=len(imgsRawArray)).reshape(nimgs, size, size)
+        select_view_group_global = select_view_group
 
 
     def run_rigid_processes(self, workdata):
@@ -514,7 +536,7 @@ class Fitter:
         rank = workdata[0]
 
         projMatch = ProjMatch(img=self.imgs[rank], simulator=self.simulator, pdb=self.pdb)
-        projMatch.run(library=library_global, verbose=False)
+        projMatch.run(library=library_global, verbose=False, select_view_group=select_view_group_global)
 
         idx_best_views =np.argsort(projMatch.mse)
         angles_global[rank,:] = projMatch.angles[idx_best_views]
@@ -611,16 +633,14 @@ class Fitter:
         """
         Show the angular distribution of the rigid fitting
         """
-        if self.rigid_mses is None:
+        if not self.rigid_done:
             raise RuntimeError("Perform fitting first")
         show_angular_distr(self.rigid_angles[:,0], np.sqrt(self.rigid_mses[:,0]), cbar=True)
-    def show(self):
+    def show(self, **kwargs):
         """
         Opens the fitting viewer
         """
-        if self.flexible_mses is None:
-            raise RuntimeError("Perform fitting first")
-        viewFit(self, interpolate="bicubic", diff_range=None)
+        viewFit(self, **kwargs)
 
     def viewFitChimera(self, index=0, translate_z=0.0, upsample=2, truemesh=True):
         """
@@ -630,6 +650,8 @@ class Fitter:
         :param upsample: Upsample the image
         :param truemesh: Shows the image as a mesh or clouds of points
         """
+        if not self.flexible_done:
+            raise RuntimeError("Perform fitting first")
         with tempfile.TemporaryDirectory() as tmpdir:
             to_mesh(img=self.imgs[index], vsize=self.simulator.vsize, file=tmpdir + "/img.bild", upsample=upsample,
                     truemesh=truemesh)

@@ -148,7 +148,18 @@ class ImageSet:
         Show the angular distribution of the images
         :param kwargs:
         """
-        show_angular_distr(self.angles,**kwargs)
+        if self.angles is not None:
+            show_angular_distr(self.angles,**kwargs)
+        else:
+            print("Define angles first")
+    def set_zero(self, zero_val=None):
+        """
+        Set the zero to the minimum value of the set
+        """
+        if zero_val is None:
+            zero_val = self.imgs.min()
+        self.imgs -= zero_val
+        self.imgs[self.imgs < 0.0 ]= 0.0
 
 class ImageLibrary:
 

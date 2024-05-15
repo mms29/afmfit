@@ -107,9 +107,9 @@ class TestFitting(unittest.TestCase):
     def test_trans_match(self):
         ref = PDB(join(get_tests_data(), "ref.pdb"))
         ref.center()
-        shift_gt = [28.5, -33.72, 0]
         rot = ref.copy()
-        rot.translate(shift_gt)
+        rot.rotate([200,10,-20])
+        rot.translate([28.5, -33.72, 0])
 
         sim = AFMSimulator(size=40, vsize=7.23, beta=1.0, sigma=4.2, cutoff=20)
         img1 = sim.pdb2afm(ref, zshift=30.0)
@@ -124,7 +124,7 @@ class TestFitting(unittest.TestCase):
 
         # assert that the MSE calculated by trans_match is the same than the MSE obtained by applying the shifts to
         #  the structure and projecting to image again
-        self.assertAlmostEqual(np.linalg.norm(img3 - img2) , mse, 2)
+        self.assertAlmostEqual(np.linalg.norm(img3 - img2) , mse, 4)
 
     def test_proj_match(self):
         angular_dist = 10

@@ -46,11 +46,12 @@ class AFMSimulator:
             zshift=zshift, vsize=self.vsize, beta=self.beta, r=r, sigma=self.sigma)
         return grad
 
-    def project_library(self, n_cpu, pdb, angular_dist, init_zshift = None, verbose=True, zshift_range=None):
+    def project_library(self, n_cpu, pdb, angular_dist, init_zshift = None, verbose=True, zshift_range=None,
+                        near_angle=None, near_angle_cutoff = None, true_zshift=True):
         ZERO_CUTOFF = 5.0  # Angstrom
 
         # Compute directions views
-        angles = get_sphere_full(angular_dist)
+        angles = get_sphere_full(angular_dist, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff)
 
         #inputs
         n_angles, _ = angles.shape
@@ -68,7 +69,7 @@ class AFMSimulator:
 
         # Run multiprocess
         p = Pool(n_cpu, initializer=self.init_projLibrary_processes, initargs=(imageLibrarySharedArray, zshiftRawArray, n_imgs,
-                n_zshifts, ZERO_CUTOFF, zshift_range, self, pdb, init_zshift))
+                n_zshifts, ZERO_CUTOFF, zshift_range, self, pdb, init_zshift, true_zshift))
         for _ in tqdm.tqdm(p.imap_unordered(self.run_projLibrary_process, workdata), total=len(workdata), desc="Project Library"
                            , disable=not verbose):
             pass
@@ -117,7 +118,7 @@ class AFMSimulator:
         return np.loadtxt(prefix + ".tsv").T
 
     def init_projLibrary_processes(self, imageLibrarySharedArray, zshiftRawArray, n_imgs,
-                n_zshifts, zero_cutoff, zshift_range, simulator, pdb,init_zshift):
+                n_zshifts, zero_cutoff, zshift_range, simulator, pdb,init_zshift, true_zshift):
         global image_library_global
         global z_shifts_global
         global n_zshifts_global
@@ -126,6 +127,7 @@ class AFMSimulator:
         global simulator_global
         global pdb_global
         global init_zshift_global
+        global true_zshift_global
 
         image_library_global = frombuffer(imageLibrarySharedArray, dtype=np.float32,
                                    count=len(imageLibrarySharedArray)).reshape(n_imgs,
@@ -139,6 +141,7 @@ class AFMSimulator:
         simulator_global = simulator
         pdb_global = pdb
         init_zshift_global = init_zshift
+        true_zshift_global = true_zshift
 
     def run_projLibrary_process(self, workdata):
         rank =  workdata[0]
@@ -153,17 +156,22 @@ class AFMSimulator:
         else:
             z_shift = init_zshift_global
 
-        max_zshift = np.max(zshift_range_global)
-        img = simulator_global.pdb2afm(rot, zshift=z_shift +max_zshift)
+        if true_zshift_global:
+            for z in range(n_zshifts_global):
+                image_library_global[rank*n_zshifts_global + z] = simulator_global.pdb2afm(rot, zshift=z_shift + zshift_range_global[z])
+                z_shifts_global[rank * n_zshifts_global + z] = z_shift + zshift_range_global[z]
+        else:
+            max_zshift = np.max(zshift_range_global)
+            img = simulator_global.pdb2afm(rot, zshift=z_shift +max_zshift)
 
-        for z in range(n_zshifts_global):
-            img_zshift = img.copy()
-            img_zshift[img_zshift >= zero_cutoff_global] += zshift_range_global[z]-max_zshift
-            img_zshift[img_zshift < 0.0] = 0.0
+            for z in range(n_zshifts_global):
+                img_zshift = img.copy()
+                img_zshift[img_zshift >= zero_cutoff_global] += zshift_range_global[z]-max_zshift
+                img_zshift[img_zshift < 0.0] = 0.0
 
-            z_shifts_global[rank * n_zshifts_global + z] = z_shift + zshift_range_global[z]
+                z_shifts_global[rank * n_zshifts_global + z] = z_shift + zshift_range_global[z]
 
-            image_library_global[rank*n_zshifts_global + z] = img_zshift
+                image_library_global[rank*n_zshifts_global + z] = img_zshift
 
 
 @njit
@@ -237,6 +245,7 @@ def _select_pixels(coord, size, voxel_size, n_pix_cutoff):
             else:
                 warn=True
     if warn :
-        print("WARNING : Atomic coordinates got outside the box")
+        pass
+        # print("WARNING : Atomic coordinates got outside the box")
     return pix
 

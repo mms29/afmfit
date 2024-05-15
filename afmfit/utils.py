@@ -57,17 +57,39 @@ class DimRed:
         dimred.run(**kwargs)
         return dimred
 
-    def cluster_linear(self, ax=0, n_points=5, method="max"):
+    def traj_linear(self, ax=0, n_points=5, method="max"):
         p = np.zeros((self.n_components, n_points))
         if method == "max":
             p[ax] = np.linspace(self.data[:, ax].min(), self.data[:, ax].max(), n_points)
         elif method == "std":
             p[ax] = np.linspace(self.data[:, ax].mean() - 2 * self.data[:, ax].std(), self.data[:, ax].mean() + 2 * self.data[:, ax].std(),
                                 n_points)
+        return p
+    def traj_percent(self, ax=0, n_points=5):
+        p = np.zeros((self.n_components, n_points))
+        p[ax] = np.array([np.percentile(self.data[:,0],100*(i+1)/(n_points+1)) for i in range(n_points)])
+        return p
+
+    def traj2cluster(self, traj, ax=None):
         cluster = []
+        if ax is not None:
+            data = self.data[:,np.array(ax)]
+        else:
+            data=self.data
         for i in range(self.n_data):
-            cluster.append(np.argmin(np.linalg.norm(p.T - self.data[i], axis=1)) + 1)
-        return cluster, p
+            cluster.append(np.argmin(np.linalg.norm(traj.T - data[i], axis=1)) + 1)
+        return cluster
+
+    def traj2segments(self, traj, ax):
+        cluster = []
+        data = self.data[:,np.array(ax)]
+        for i in range(self.n_data):
+            ids = np.where(traj[ax] - data[i] < 0.0)[0]
+            if len(ids)==0:
+                cluster.append(1)
+            else:
+                cluster.append(np.max(ids) + 1)
+        return cluster
 
     def cluster2coords(self, cluster):
         n_points = len(set(cluster))
@@ -112,19 +134,27 @@ class DimRed:
         axp.set_ylabel(axname + str(ax[1]))
         fig.show()
 
-    def viewAxisChimera(self, ax=0, avg=True, method="std", n_points=5, align=False, align_ref=None, prefix=None):
-        cluster, traj = self.cluster_linear(ax=ax, n_points=n_points, method=method)
-        self.show(cval=np.array(cluster).astype(int), points=traj, cname="Clusters")
-
-
+    def viewAxisChimeraLinear(self, ax=0, n_points=5, avg=True,linear_range="std",align=False, align_ref=None, prefix=None):
+        traj = self.traj_linear(ax=ax, n_points=n_points, method=linear_range)
+        print(traj)
         if avg:
-            coords = self.cluster2coords(cluster)
+            cluster = self.traj2cluster(traj)
+            self.viewAxisChimera(cluster=cluster, align=align, align_ref=align_ref, prefix=prefix)
         else:
-            if method == "umap":
+            self.viewAxisChimera(traj=traj, align=align, align_ref=align_ref, prefix=prefix)
+
+    def viewAxisChimera(self, traj=None, cluster =None, align=False, align_ref=None, prefix=None):
+        if cluster is not None:
+            coords = self.cluster2coords(cluster)
+            n_points = len(set(cluster))
+        elif traj is not None:
+            if self.method == "umap":
                 raise RuntimeError("Inverse UMAP not available")
             else:
                 coords = self.traj2coords(traj)
-
+                n_points=len(coords)
+        else:
+            raise RuntimeError("Must provide trajectory or clusters")
 
         if align:
             if align_ref is None:
@@ -282,9 +312,12 @@ def get_sphere(angular_dist):
         angles[i] = matrix2euler(R)
     return angles
 
-def get_sphere_full(angular_dist):
+def get_sphere_full(angular_dist,  near_angle=None, near_angle_cutoff=None):
     n_zviews = 360 // angular_dist
-    angles = get_sphere(angular_dist)
+    if near_angle is not None:
+        angles = get_sphere_near(angular_dist, near_angle, near_angle_cutoff)
+    else:
+        angles = get_sphere(angular_dist)
     num_pts = len(angles)
     new_angles = np.zeros((num_pts * n_zviews, 3))
     for i in range(num_pts):
@@ -341,49 +374,55 @@ def rotation_matrix_from_vectors(vec2):
     rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
     return rotation_matrix
 
-def to_mesh(img, vsize, file, upsample=1, truemesh=True):
+def to_mesh(img, vsize, file, resample=1, truemesh=True):
     import scipy
     norm = matplotlib.colors.Normalize(vmin=0.0, vmax=img.max())
     cmap = matplotlib.colormaps.get_cmap('afmhot_r')
 
-    imgup = scipy.ndimage.zoom(img, upsample, order=3)
-    vsizeup = vsize/upsample
+    if resample> 1:
+        imgresamp = scipy.ndimage.zoom(img, resample, order=3)
+    elif resample<1:
+        imgresamp = img[::int(1/resample), ::int(1/resample)]
+    else:
+        imgresamp = img
+    vsize = vsize/resample
 
-    size = imgup.shape[0]
+
+    sizex, sizey = imgresamp.shape
     origin= np.array([0.0,0.0,0.0])
-    x = np.linspace(-size/2 * vsizeup, size/2 *vsizeup, size)
-    y = np.linspace(-size/2 * vsizeup, size/2 *vsizeup, size)
+    x = np.linspace(-sizex/2 * vsize, sizex/2 *vsize, sizex)
+    y = np.linspace(-sizey/2 * vsize, sizey/2 *vsize, sizey)
 
     with open(file , "w") as f:
         if truemesh:
-            for i in range(size):
-                for j in range(size):
-                    color = cmap(1-norm(imgup[i,j]))
+            for i in range(sizex):
+                for j in range(sizey):
+                    color = cmap(1-norm(imgresamp[i,j]))
                     f.write(".color %.2f %.2f %.2f \n"%(color[0], color[1], color[2]))
                     if j==0:
-                        f.write(".m %.2f %.2f %.2f \n" % (x[i], y[j], imgup[i, j]))
+                        f.write(".m %.2f %.2f %.2f \n" % (x[i], y[j], imgresamp[i, j]))
                     else:
-                        f.write(".d %.2f %.2f %.2f \n" % (x[i], y[j], imgup[i, j]))
-            for j in range(size):
-                for i in range(size):
-                    color = cmap(1 - norm(imgup[i, j]))
+                        f.write(".d %.2f %.2f %.2f \n" % (x[i], y[j], imgresamp[i, j]))
+            for j in range(sizey):
+                for i in range(sizex):
+                    color = cmap(1 - norm(imgresamp[i, j]))
                     f.write(".color %.2f %.2f %.2f \n" % (color[0], color[1], color[2]))
                     if i == 0:
-                        f.write(".m %.2f %.2f %.2f \n" % (x[i], y[j], imgup[i, j]))
+                        f.write(".m %.2f %.2f %.2f \n" % (x[i], y[j], imgresamp[i, j]))
                     else:
-                        f.write(".d %.2f %.2f %.2f \n" % (x[i], y[j], imgup[i, j]))
+                        f.write(".d %.2f %.2f %.2f \n" % (x[i], y[j], imgresamp[i, j]))
             f.write("\n")
 
         else:
-            for i in range(size):
-                for j in range(size):
-                    color = cmap(1-norm(imgup[i,j]))
+            for i in range(sizex):
+                for j in range(sizey):
+                    color = cmap(1-norm(imgresamp[i,j]))
                     f.write(".color %.2f %.2f %.2f \n"%(color[0], color[1], color[2]))
 
-                    f.write(".dot %.2f %.2f %.2f \n"%(x[i], y[j], imgup[i,j]))
-                    if j+1<size and i+1< size:
-                        f.write(".v %.2f %.2f %.2f %.2f %.2f %.2f \n" % (x[i], y[j], imgup[i, j],x[i], y[j+1], imgup[i, j+1]))
-                        f.write(".v %.2f %.2f %.2f %.2f %.2f %.2f \n" % (x[i], y[j], imgup[i, j],x[i+1], y[j], imgup[i+1, j]))
+                    f.write(".dot %.2f %.2f %.2f \n"%(x[i], y[j], imgresamp[i,j]))
+                    if j+1<sizey and i+1< sizex:
+                        f.write(".v %.2f %.2f %.2f %.2f %.2f %.2f \n" % (x[i], y[j], imgresamp[i, j],x[i], y[j+1], imgresamp[i, j+1]))
+                        f.write(".v %.2f %.2f %.2f %.2f %.2f %.2f \n" % (x[i], y[j], imgresamp[i, j],x[i+1], y[j], imgresamp[i+1, j]))
                     f.write("\n")
 
 

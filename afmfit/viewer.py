@@ -100,11 +100,15 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
     :return: matplotlib Figure
     """
     stk1 = fitter.rigid_imgs
-    stk2 = fitter.flexible_imgs
     stk_est = fitter.imgs
     sim     = fitter.simulator
     rigid_mse = fitter.rigid_mses
-    flexible_mse = fitter.flexible_mses
+    if fitter.flexible_done:
+        stk2 = fitter.flexible_imgs
+        flexible_mse = fitter.flexible_mses
+    else:
+        stk2 = np.zeros(stk1.shape)
+        flexible_mse = rigid_mse
     nimg = fitter.nimgs
     size = sim.size
     vsize=sim.vsize
@@ -130,7 +134,10 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
         ang2 = deg2rad(fitter.rigid_angles[idx, :, 1]) - np.pi / 2
         ang3 = deg2rad(fitter.rigid_angles[idx, :, 2])
         angc = fitter.rigid_mses[idx]
-        angf = [deg2rad(fitter.flexible_angles[idx, 0]), deg2rad(fitter.flexible_angles[idx, 1])- np.pi / 2, deg2rad(fitter.flexible_angles[idx, 2])]
+        if fitter.flexible_done:
+            angf = [deg2rad(fitter.flexible_angles[idx, 0]), deg2rad(fitter.flexible_angles[idx, 1])- np.pi / 2, deg2rad(fitter.flexible_angles[idx, 2])]
+        else:
+            angf = [ang1[0], ang2[0], ang3[0]]
         angr = [ang1[0], ang2[0], ang3[0]]
         return ang1, ang2, ang3, angc, angf,angr
 
@@ -187,10 +194,12 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
     axdif.set_xlabel("nm")
     axdfr.set_xlabel("nm")
     axdff.set_xlabel("nm")
-    lmsf = axmse.plot(np.sqrt(flexible_mse[0]), "o-")
-    lmsr = axmse.plot(np.sqrt(rigid_mse[0,:flexible_mse.shape[1]]), "o-")
-    lrms = axrms.plot(fitter.flexible_rmsds[0], "o-")
-
+    if fitter.flexible_done:
+        lmsf = axmse.plot(np.sqrt(flexible_mse[0]), "o-")
+        lmsr = axmse.plot(np.sqrt(rigid_mse[0,:flexible_mse.shape[1]]), "o-")
+        lrms = axrms.plot(fitter.flexible_rmsds[0], "o-")
+    else:
+        lmsr = axmse.plot(np.sqrt(rigid_mse[0]), "o-")
     axmse.set_title("pixel-wise $l_2$")
     axmse.set_xlabel("iter")
     axrms.set_title("RMSD ($\AA$)")
@@ -262,14 +271,19 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
         cbar1.update_ticks()
         cbar2.update_normal(im4)
         cbar2.update_ticks()
-        mser =np.sqrt(rigid_mse[idx, :flexible_mse.shape[1]])
-        msef =np.sqrt(flexible_mse[idx])
-        rmsd = fitter.flexible_rmsds[idx]
-        lmsr[0].set_ydata(mser)
-        lmsf[0].set_ydata(msef)
-        lrms[0].set_ydata(rmsd)
-        axmse.set_ylim(min (mser.min(), msef.min()), max(mser.max(), msef.max()))
-        axrms.set_ylim(rmsd.min(), rmsd.max())
+        if fitter.flexible_done:
+            mser =np.sqrt(rigid_mse[idx, :flexible_mse.shape[1]])
+            msef =np.sqrt(flexible_mse[idx])
+            rmsd = fitter.flexible_rmsds[idx]
+            lmsr[0].set_ydata(mser)
+            lmsf[0].set_ydata(msef)
+            lrms[0].set_ydata(rmsd)
+            axmse.set_ylim(min(mser.min(), msef.min()), max(mser.max(), msef.max()))
+            axrms.set_ylim(rmsd.min(), rmsd.max())
+        else:
+            mser =np.sqrt(rigid_mse[idx])
+            lmsr[0].set_ydata(mser)
+            axmse.set_ylim(mser.min(),mser.max())
         if pca is not None:
             spca.set_offsets(pca[idx,:2])
         san1.set_offsets( np.array([ang3, ang2]).T)
