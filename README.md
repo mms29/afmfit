@@ -8,7 +8,7 @@ AFMfit can be installed with pip :
 
 ```
 git clone https://github.com/mms29/afmfit.git .
-pip install afmfit
+pip3 install afmfit
 ```
 
 **Recommendation :**
@@ -21,11 +21,11 @@ It is recommended to have ```chimerax``` installed and available in the PATH var
 Examples are available in the form of Jupyter notebooks.
 Make sure you have [Jupyter](https://jupyter.org/) installed : 
 ```
-pip install jupyter
+pip3 install jupyter
 ```
 The tutorial can be launched by :
 ```
-jupyter notebook /path/to/afmfit/examples/afmfit_tuto.ipynb
+python3 -m notebook examples/afmfit_tuto.ipynb
 ```
 
 
