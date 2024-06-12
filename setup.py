@@ -37,7 +37,8 @@ setup(
                       'mrcfile',  
                       'scikit-learn',
                       'umap-learn',
-                      'tiffile',                   
+                      'tiffile',
+                      "libasd",
                       ],
 
     classifiers=[

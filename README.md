@@ -1,6 +1,6 @@
 # AFMfit
 
-A python package for flexible fitting of AFM images  
+A python package for flexible fitting of AFM images.
 
 ## Installation
 
@@ -31,10 +31,12 @@ python3 -m notebook examples/afmfit_tuto.ipynb
 
 ## Authors
 
-Rémi Vuillemot & Sergei Grudinin,
+Rémi Vuillemot
 
 LJK - Université Grenoble Alpes 
 
 e-mail: remi.vuillemot@univ-grenoble-alpes.fr
 
 ## Citations
+
+Vuillemot, R., Pellequer, J. L., & Grudinin, S. (2024). AFMfit: Deciphering conformational dynamics in AFM data using fast nonlinear NMA and FFT-based search. bioRxiv, 2024-06.

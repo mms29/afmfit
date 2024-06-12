@@ -62,11 +62,14 @@ class AFMSimulator:
         return grad
 
     def project_library(self, n_cpu, pdb, angular_dist, init_zshift = None, verbose=True, zshift_range=None,
-                        near_angle=None, near_angle_cutoff = None, true_zshift=True):
+                        near_angle=None, near_angle_cutoff = None, true_zshift=True, init_angles=None):
         ZERO_CUTOFF = 5.0  # Angstrom
 
         # Compute directions views
-        angles = get_sphere_full(angular_dist, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff)
+        if init_angles is None:
+            angles = get_sphere_full(angular_dist, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff)
+        else:
+            angles = init_angles
 
         #inputs
         n_angles, _ = angles.shape

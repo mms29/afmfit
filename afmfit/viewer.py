@@ -17,13 +17,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.widgets import Slider, Button, TextBox
 
-def viewAFM(img, vsize=1.0, interactive=False, interpolate=None):
+def viewAFM(img, vsize=1.0, interactive=False, interpolate=None, global_max=False):
     """
     Display an AFM image or set of images
     :param img: Images or set of images
     :param vsize: pixel size
     :param interactive: if true, the images are shown one by one in an interactive plot
     :param interpolate: if defined, performs the interpolation (e.g. "spline36", "bicubic", "bilinear")
+    :param global_max: if defined, all the images shared the same colormap range
     :return: Matplotlib figure, axes
     """
     if isinstance(img , list):
@@ -34,12 +35,12 @@ def viewAFM(img, vsize=1.0, interactive=False, interpolate=None):
         else:
             nimg = 1
             img = [img]
-    max_amp = max([img[i].max() for i in range(nimg)])/10.0
+
     if not interactive and nimg <10 :
         fig, ax = plt.subplots(1, nimg, figsize = (5*nimg,4))
         if nimg == 1:
             extent = (vsize * img[0].shape[0]) /10.0
-            im = ax.imshow(img[0].T/10.0, origin="lower", cmap="afmhot", vmin = 0.0, vmax = max_amp , aspect='auto',
+            im = ax.imshow(img[0].T/10.0, origin="lower", cmap="afmhot", vmin = 0.0 , aspect='auto',
                            extent=[0,extent,extent,0], interpolation=interpolate)
             ax.grid(False)
             ax.set_xlabel("nm")
@@ -49,6 +50,10 @@ def viewAFM(img, vsize=1.0, interactive=False, interpolate=None):
 
         else:
             for i in range(nimg):
+                if global_max:
+                    max_amp = max([img[i].max() for i in range(nimg)]) / 10.0
+                else:
+                    max_amp = img[0].max() / 10.0
                 extent = (vsize * img[i].shape[0])/10.0
                 im = ax[i].imshow(img[i].T/10.0, origin="lower", cmap="afmhot", vmin = 0.0, vmax = max_amp, aspect='auto',
                                   extent=[0,extent,extent,0], interpolation=interpolate)
@@ -62,16 +67,24 @@ def viewAFM(img, vsize=1.0, interactive=False, interpolate=None):
 
         fig, ax = plt.subplots(1, 1, figsize=(8, 5))
         plt.subplots_adjust(bottom=0.2)
+        if global_max:
+            max_amp = max([img[i].max() for i in range(nimg)]) / 10.0
+        else:
+            max_amp = img[0].max() / 10.0
         extent = (vsize * img[0].shape[0])/10.0
         im1 = ax.imshow(img[0].T/10.0, origin="lower", cmap="afmhot", vmin = 0.0, vmax = max_amp, #aspect='auto',
                                   extent=[0,extent,0,extent], interpolation=interpolate)
-
+        cbar = fig.colorbar(im1)
+        cbar.set_label("nm")
         vinitax = plt.axes([0.6, 0.1, 0.05, 0.04])
         vinitBox = TextBox(vinitax, "", initial=str(0))
         axcolor = 'lightblue'
 
         def update(val):
             im1.set_data((img[int(vinitBox.text) + 0]).T /10.0)
+            if not global_max:
+                cbar.update_normal(im1)
+                cbar.update_ticks()
             fig.canvas.draw_idle()
 
         doneax = plt.axes([0.7, 0.1, 0.1, 0.04])
@@ -99,11 +112,76 @@ def viewAFM(img, vsize=1.0, interactive=False, interpolate=None):
         buttonr.on_clicked(right)
         buttonl.on_clicked(left)
         buttond.on_clicked(done)
-        cbar = fig.colorbar(im1)
-        cbar.set_label("nm")
+
 
         plt.show(block=True)
     return fig, ax
+
+
+
+def viewAFMPick(img, centers, vsize=1.0, interpolate=None):
+
+    if isinstance(img , list):
+        nimg = len(img)
+    else:
+        if len(img.shape) ==3:
+            nimg = img.shape[0]
+        else:
+            nimg = 1
+            img = [img]
+    max_amp = max([img[i].max() for i in range(nimg)])/10.0
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    plt.subplots_adjust(bottom=0.2)
+    extent = (vsize * img[0].shape[0])/10.0
+    im1 = ax.imshow(img[0].T/10.0, origin="lower", cmap="afmhot", vmin = 0.0, vmax = max_amp, #aspect='auto',
+                              extent=[0,extent,0,extent], interpolation=interpolate)
+    shiftsx = np.array(centers[0])[:,0]/vsize + img.shape[1]/2
+    shiftsy = np.array(centers[0])[:,1]/vsize + img.shape[2]/2
+    scatt =ax.scatter(shiftsx, shiftsy , c="lime")
+
+    vinitax = plt.axes([0.6, 0.1, 0.05, 0.04])
+    vinitBox = TextBox(vinitax, "", initial=str(0))
+    axcolor = 'lightblue'
+
+    def update(val):
+        im1.set_data((img[int(vinitBox.text) + 0]).T /10.0)
+        shiftsx = np.array(centers[int(vinitBox.text)])[:, 0] / vsize + img.shape[1] / 2
+        shiftsy = np.array(centers[int(vinitBox.text)])[:, 1] / vsize + img.shape[2] / 2
+        scatt.set_offsets(np.array([shiftsx, shiftsy]).T)
+        fig.canvas.draw_idle()
+
+    doneax = plt.axes([0.7, 0.1, 0.1, 0.04])
+    buttond = Button(doneax, 'Done', color=axcolor, hovercolor='0.975')
+    rightax = plt.axes([0.5, 0.1, 0.1, 0.04])
+    buttonr = Button(rightax, '->', color=axcolor, hovercolor='0.975')
+    leftax = plt.axes([0.4, 0.1, 0.1, 0.04])
+    buttonl = Button(leftax, '<-', color=axcolor, hovercolor='0.975')
+
+    def right(event):
+        vinit = int(vinitBox.text)
+        if vinit != nimg -1:
+            vinitBox.set_val(str(vinit + 1))
+        update(0)
+
+    def left(event):
+        vinit = int(vinitBox.text)
+        if vinit != 0:
+            vinitBox.set_val(str(vinit - 1))
+        update(0)
+
+    def done(event):
+        plt.close(fig)
+
+    buttonr.on_clicked(right)
+    buttonl.on_clicked(left)
+    buttond.on_clicked(done)
+    cbar = fig.colorbar(im1)
+    cbar.set_label("nm")
+
+    plt.show(block=True)
+    return fig, ax
+
+
 
 def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
     """

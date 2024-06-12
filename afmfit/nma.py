@@ -95,7 +95,10 @@ class NormalModesRTB:
                 pdb.write_pdb(pdbfile)
             else:
                 pdbfile = pdb
-                pdb = PDB(pdbfile)
+                try:
+                    pdb = PDB(pdbfile)
+                except:
+                    pass
 
             # Run NOLB
             cmd = "%s %s -o %s -s 0 -n %i --format 3 -c %f %s" %(get_nolb_path(), pdbfile, tmpPrefix, nmodes, cutoff, options)

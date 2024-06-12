@@ -149,6 +149,42 @@ class DimRed:
         axp.set_ylabel(axname + str(ax[1]))
         fig.show()
 
+    def show_density(self, ax, resolution=20, cmap="Blues_r", interpolation="spline36"):
+        if not len(ax) == 2:
+            raise RuntimeError("Dimension must be 2")
+        data = self.data[:, np.array(ax)]
+        xmin = np.min(data[:, 0])
+        xmax = np.max(data[:, 0])
+        ymin = np.min(data[:, 1])
+        ymax = np.max(data[:, 1])
+        xm = (xmax - xmin) * 0.1
+        ym = (ymax - ymin) * 0.1
+        xmin -= xm
+        xmax += xm
+        ymin -= ym
+        ymax += ym
+        x = np.linspace(xmin, xmax, resolution)
+        y = np.linspace(ymin, ymax, resolution)
+        count = np.zeros((resolution, resolution))
+        for i in range(data.shape[0]):
+            count[np.argmin(np.abs(x.T - data[i, 0])),
+            np.argmin(np.abs(y.T - data[i, 1]))] += 1
+        img = -np.log(count / count.max())
+        img[img == np.inf] = img[img != np.inf].max()
+
+        fig, ax = plt.subplots(1, 1, layout="constrained")
+        if interpolation is not None:
+            im = ax.imshow(img.T[::-1, :],
+                           cmap=cmap, interpolation="bicubic",
+                           extent=[xmin, xmax, ymin, ymax])
+        else:
+            xx, yy = np.mgrid[xmin:xmax:resolution * 1j, ymin:ymax:resolution * 1j]
+            im = ax.contourf(xx, yy, img, cmap=cmap, levels=12)
+        cbar = fig.colorbar(im)
+        cbar.set_label("Density")
+        fig.show()
+        return fig
+
     def viewAxisChimeraLinear(self, ax=0, n_points=5, avg=True,linear_range="std",align=False, align_ref=None, prefix=None):
         traj = self.traj_linear(ax=ax, n_points=n_points, method=linear_range)
         print(traj)
@@ -463,3 +499,15 @@ def get_nolb_path():
         return join(afmfit.__path__[0], join("nolb", "NOLB"))
     elif platform.system() == 'Darwin':
         return join(afmfit.__path__[0], join("nolb", "NOLB_macOS"))
+    else:
+        raise RuntimeError("OS not supported : %s"%platform.system())
+
+def get_init_angles_flat(pdb, percent=0.1, angular_dist=10):
+    angles = get_sphere_full(angular_dist=angular_dist)
+    zsize = np.zeros(angles.shape[0])
+    for i in range(angles.shape[0]):
+        cop = pdb.copy()
+        cop.rotate(angles[i])
+        zsize[i] = cop.coords[:,2].max() - cop.coords[:,2].min()
+    init_angles = angles[zsize<np.percentile(zsize, percent)]
+    return init_angles

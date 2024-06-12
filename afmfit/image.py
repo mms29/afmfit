@@ -23,6 +23,8 @@ from matplotlib.widgets import Slider, Button, RadioButtons, TextBox
 from tiffile import imwrite, imread
 from numba import njit
 import mrcfile
+import libasd
+from scipy import stats
 
 class ImageSet:
 
@@ -58,7 +60,24 @@ class ImageSet:
         arr = imread(file).astype(np.float32)
         img = cls.arr2img(arr, unit)
 
-        print("Read %i images of size %i x %i "%img.shape)
+        print("Read %i images of size %i x %i pix at %.2f nm/pix "%(img.shape[0], img.shape[1], img.shape[2], vsize/10.0))
+        return cls(img, vsize)
+    @classmethod
+    def read_asd(cls, file):
+        """
+        Read a set of images in a .asd file
+        :param file: asd file
+        :return: set of images
+        """
+        data = libasd.read_asd(file)
+        vsize = (data.header.x_scanning_range/data.header.x_pixel)*10 # nm to ang
+        print("scanning range : %f"%data.header.x_scanning_range)
+        print("scanning range : %i"%data.header.x_pixel)
+        arr = np.array([data.frames[i].data for i in range(len(data.frames))], dtype=np.float32)
+
+        img = cls.arr2img(arr, unit="nm")
+
+        print("Read %i images of size %i x %i pix at %.2f nm/pix "%(img.shape[0], img.shape[1], img.shape[2], vsize/10.0))
         return cls(img, vsize)
     @classmethod
     def read_mrc(cls, file, vsize=1.0, unit='nm'):
@@ -73,7 +92,7 @@ class ImageSet:
             arr = np.array(mrc.data, dtype=np.float32)
         img = cls.arr2img(arr, unit)
 
-        print("Read %i images of size %i x %i "%img.shape)
+        print("Read %i images of size %i x %i pix at %.2f nm/pix "%(img.shape[0], img.shape[1], img.shape[2], vsize/10.0))
         return cls(img, vsize)
 
     def write_tif(self, file, unit = "nm"):
@@ -156,7 +175,7 @@ class ImageSet:
         Show the images
         :param kwargs:
         """
-        viewAFM(self.imgs, interactive=True,**kwargs)
+        viewAFM(self.imgs, vsize = self.vsize,interactive=True,**kwargs)
 
     def show_angular_distr(self, **kwargs):
         """
@@ -175,6 +194,28 @@ class ImageSet:
             zero_val = self.imgs.min()
         self.imgs -= zero_val
         self.imgs[self.imgs < 0.0 ]= 0.0
+    def set_max(self, max_val):
+        """
+        Set the maximum value of the set
+        """
+        self.imgs[self.imgs >max_val]= max_val
+
+    def normalize_mode(self):
+        """
+        Set the zero of each image in the set based on its first histogram mode
+        :return:
+        """
+        for index in range(self.nimg):
+            arr = self.imgs[index].flatten()
+            mode = stats.mode(arr)
+            if len(mode) > 1:
+                pass
+            self.imgs[index] -= mode[0]
+
+    def show_histogram(self, bins=100):
+        fig, ax = plt.subplots(1, 1)
+        ax.hist(self.imgs.flatten(), bins)
+        fig.show()
 
 class ImageLibrary:
 

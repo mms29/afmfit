@@ -21,6 +21,7 @@ import copy
 from Bio.SVDSuperimposer import SVDSuperimposer
 import tempfile
 from afmfit.utils import run_chimerax
+from warnings import warn
 
 class PDB:
 
@@ -296,17 +297,20 @@ class PDB:
         """
         radius = {
             "H": 1.2,
-            "O": 1.5,
-            "S": 1.6,
-            "N": 1.5,
-            "C": 1.7
+            "O": 1.52,
+            "S": 1.8,
+            "N": 1.55,
+            "C": 1.7,
+            "P": 1.8,
         }
         r = []
         for i in range(self.n_atoms):
             ename = self.elemName[i]
             if ename not in radius:
-                raise RuntimeError("Unknown element : " + ename)
-            r.append(radius[ename])
+                warn("Unknown element : " + ename)
+                r.append(1.5)
+            else:
+                r.append(radius[ename])
         return np.array(r)
 
     def getRMSD(self, reference_pdb, align=False, idx_matching_atoms=None):

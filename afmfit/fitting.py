@@ -148,13 +148,17 @@ class ProjMatch:
         img1_ft = np.fft.rfftn(img1)
         img2_ft = np.fft.rfftn(img2)
         corr  = np.fft.irfftn(img1_ft * np.conjugate(img2_ft)).real
-        shiftx = np.argmax(corr.sum(axis=1))
-        shifty = np.argmax(corr.sum(axis=0))
-        if shiftx>= size//2:
-            shiftx-= size
-        if shifty>= size//2:
-            shifty-= size
-        return -shiftx, -shifty, np.max(corr)
+        dx, dy = np.unravel_index(corr.argmax(), corr.shape)
+        max_corr = corr[dx,dy]
+        if dx>= size//2:
+            shiftx = size-dx
+        else:
+            shiftx = -dx
+        if dy>= size//2:
+            shifty = size-dy
+        else:
+            shifty = -dy
+        return shiftx, shifty, max_corr
 
 class NMAFit:
     def __init__(self):
@@ -389,7 +393,8 @@ class Fitter:
         return self.flexible_rmsds[(np.arange(self.nimgs), np.argmin(self.flexible_mses, axis=1))]
 
     def fit_rigid(self, n_cpu, angular_dist=10.0, verbose=False, zshift_range=None,
-                  init_zshift=None, near_angle=None, near_angle_cutoff=None, select_view_group = True, true_zshift=True):
+                  init_zshift=None, near_angle=None, near_angle_cutoff=None, select_view_group = True,
+                  true_zshift=True, init_library=None):
         """
         Performs the rigid fitting on the set of images
         :param n_cpu: Number of CPUs
@@ -401,6 +406,7 @@ class Fitter:
         :param near_angle_cutoff: Maximum angular distance (°) to restrict the projection matching around the specified angle
         :param select_view_group: if True, returns the min MSE angles and shifts for each view group
         :param true_zshift: if False, the z shift are estimated by shifting the entire image (faster but less accurate)
+        :param init_library: uses an input library of images instead of generating a new one
         """
         dt = time.time()
 
@@ -409,9 +415,12 @@ class Fitter:
             zshift_range = np.linspace(-20.0,20.0,10)
 
         # create library
-        library = self.simulator.project_library(n_cpu=n_cpu, pdb=self.pdb,  angular_dist=angular_dist, verbose=verbose,
-                    zshift_range=zshift_range, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff,
-                                                 init_zshift=init_zshift, true_zshift=true_zshift)
+        if init_library is None:
+            library = self.simulator.project_library(n_cpu=n_cpu, pdb=self.pdb,  angular_dist=angular_dist, verbose=verbose,
+                        zshift_range=zshift_range, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff,
+                                                     init_zshift=init_zshift, true_zshift=true_zshift)
+        else:
+            library = init_library
 
         if select_view_group:
             nview = library.nview
@@ -437,7 +446,8 @@ class Fitter:
             pass
 
         # free library
-        del library
+        if init_library is None:
+            del library
 
         # set output arrays
         self.rigid_angles = frombuffer(anglesRawArray, dtype=np.float64,
@@ -697,7 +707,7 @@ class Fitter:
         msef  = np.sqrt(np.min(self.flexible_mses, axis=1))
         rmsd  = self.flexible_rmsds[(np.arange(self.nimgs),np.argmin(self.flexible_mses, axis=1))]
         def get_pct(vr, vf):
-            return -100*vr/vf * (1- (vr/vf))
+            return 100*(1- (vr/vf))
         return mser.mean(), (msef ).mean(), rmsd.mean(), get_pct((mser).mean(),(msef ).mean())
 
     def show_stats(self):
