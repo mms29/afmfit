@@ -1,6 +1,6 @@
 # AFMfit
 
-A python package for flexible fitting of AFM images.
+A python package for flexible fitting of AFM images [1].
 
 ## Installation
 
@@ -10,6 +10,7 @@ AFMfit can be installed with _pip_ package manager :
 git clone https://gricad-gitlab.univ-grenoble-alpes.fr/GruLab/afmfit.git
 pip3 install afmfit
 ```
+_(Computation time : 1 min on a 16-core personal desktop)_
 
 **Recommendation :**
 
@@ -23,11 +24,11 @@ Make sure you have [Jupyter](https://jupyter.org/) installed :
 ```
 pip3 install jupyter
 ```
-The tutorial can be launched by :
+The tutorial implements the data analysis of synthetic AFM images of Elongation Factor 2 (EF2) described in [1] and can be launched by :
 ```
 python3 -m notebook examples/afmfit_tuto.ipynb
 ```
-
+_(Computation time : 5 min on a 16-core personal desktop)_
 
 ## Authors
 
@@ -39,4 +40,4 @@ e-mail: remi.vuillemot@univ-grenoble-alpes.fr
 
 ## Citations
 
-Vuillemot, R., Pellequer, J. L., & Grudinin, S. (2024). AFMfit: Deciphering conformational dynamics in AFM data using fast nonlinear NMA and FFT-based search. bioRxiv, 2024-06.
+[1] Vuillemot, R., Pellequer, J. L., & Grudinin, S. (2024). AFMfit: Deciphering conformational dynamics in AFM data using fast nonlinear NMA and FFT-based search. bioRxiv, 2024-06.
