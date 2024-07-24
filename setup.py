@@ -39,6 +39,7 @@ setup(
                       'umap-learn',
                       'tiffile',
                       "libasd",
+                      "trackpy"
                       ],
 
     classifiers=[

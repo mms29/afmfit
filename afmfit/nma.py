@@ -364,3 +364,4 @@ def applySpiralTransformation_njit(eta, oldPositions,
             newPositions += linear_modes[i] * eta[i]
 
     return newPositions
+

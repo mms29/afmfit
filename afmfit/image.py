@@ -38,7 +38,8 @@ class ImageSet:
         """
         self.imgs = np.array(imgs, dtype=np.float32)
         self.nimg = self.imgs.shape[0]
-        self.size = self.imgs.shape[1]
+        self.sizex = self.imgs.shape[1]
+        self.sizey = self.imgs.shape[2]
         self.vsize = vsize
         if angles is None:
             self.angles = np.zeros((self.nimg, 3))
@@ -123,6 +124,8 @@ class ImageSet:
         :return: array of nimgs * size *size
         """
         return self.imgs
+    def get_img(self, index):
+        return self.get_imgs()[index]
 
     @classmethod
     def arr2img(self, arr, unit):
@@ -170,12 +173,13 @@ class ImageSet:
         arr = arr[:,:,::-1].transpose(0,2,1)
         return arr
 
-    def show(self, **kwargs):
-        """
-        Show the images
-        :param kwargs:
-        """
-        viewAFM(self.imgs, vsize = self.vsize,interactive=True,**kwargs)
+    # def show(self, **kwargs):
+    #     """
+    #     Show the images
+    #     :param kwargs:
+    #     """
+    #     # viewAFM(self.imgs, vsize = self.vsize,interactive=True,interpolate="spline36", **kwargs)
+    #     AFMfitViewer(self).view(**kwargs)
 
     def show_angular_distr(self, **kwargs):
         """
@@ -216,6 +220,89 @@ class ImageSet:
         fig, ax = plt.subplots(1, 1)
         ax.hist(self.imgs.flatten(), bins)
         fig.show()
+class Particles(ImageSet):
+
+    def __init__(self, imset, centroids, boxsize):
+        self.imset = imset
+        self.centroids = centroids
+        self.boxsize = boxsize
+        imgs = self.extract_from_centers(imset, centroids, boxsize)
+        super().__init__(imgs, imset.vsize)
+
+    def extract_from_centers(self, imgs, centers, boxsize):
+        print("Extracting particles ...")
+        nimgs = imgs.nimg
+        ncenters = np.sum([len(c) for c in centers])
+        outimgs = np.zeros((ncenters, boxsize, boxsize), np.float32)
+        c = 0
+        for i in range(nimgs):
+            for j in range(len(centers[i])):
+                cx = centers[i][j][0]
+                cy = centers[i][j][1]
+                cx0 = int(cx) - boxsize // 2
+                cy0 = int(cy) - boxsize // 2
+                cx1 = int(cx) + boxsize // 2
+                cy1 = int(cy) + boxsize // 2
+                cropx0 = 0
+                cropy0 = 0
+                cropx1 = boxsize
+                cropy1 = boxsize
+                if cx0 < 0:
+                    cropx0 = -cx0
+                    cx0 = 0
+                if cy0 < 0:
+                    cropy0 = -cy0
+                    cy0 = 0
+                if cx1 >= imgs.sizex:
+                    cropx1 = boxsize + (imgs.sizex - cx1)
+                    cx1 = imgs.sizex
+                if cy1 >= imgs.sizey:
+                    cropy1 = boxsize + (imgs.sizey - cy1)
+                    cy1 = imgs.sizey
+
+                outimgs[c, cropx0:cropx1, cropy0:cropy1] = imgs.imgs[i, cx0:cx1, cy0:cy1]
+                c += 1
+        return outimgs
+
+    def place_to_centers(self, add=True):
+        nparticles = self.nimg
+        boxsize = self.sizex
+        nimg = len(self.centroids)
+        centers = self.centroids
+        outimgs = np.zeros((nimg, self.imset.sizex, self.imset.sizey), np.float32)
+        c = 0
+        for i in range(nimg):
+            for j in range(len(centers[i])):
+                cx = centers[i][j][0]
+                cy = centers[i][j][1]
+                cx0 = int(cx) - boxsize // 2
+                cy0 = int(cy) - boxsize // 2
+                cx1 = int(cx) + boxsize // 2
+                cy1 = int(cy) + boxsize // 2
+                cropx0 = 0
+                cropy0 = 0
+                cropx1 = boxsize
+                cropy1 = boxsize
+                if cx0 < 0:
+                    cropx0 = -cx0
+                    cx0 = 0
+                if cy0 < 0:
+                    cropy0 = -cy0
+                    cy0 = 0
+                if cx1 >= self.imset.sizex:
+                    cropx1 = boxsize + (self.imset.sizex - cx1)
+                    cx1 = self.imset.sizex
+                if cy1 >= self.imset.sizey:
+                    cropy1 = boxsize + (self.imset.sizey - cy1)
+                    cy1 = self.imset.sizey
+
+                if not add:
+                    outimgs[i, cx0:cx1, cy0:cy1] = self.imgs[c, cropx0:cropx1, cropy0:cropy1]
+                else:
+                    outimgs[i, cx0:cx1, cy0:cy1] += self.imgs[c, cropx0:cropx1, cropy0:cropy1]
+                c += 1
+
+        return ImageSet(outimgs, vsize=self.vsize)
 
 class ImageLibrary:
 
@@ -234,6 +321,8 @@ class ImageLibrary:
         self.imgRawArray = imgRawArray
         self.nimgs = nimgs
         self.size = size
+        self.sizex = size
+        self.sizey = size
         self.vsize = vsize
         self.angles = angles
         self.z_shifts = z_shifts
@@ -273,7 +362,10 @@ class ImageLibrary:
         Show the set of images
         :param kwargs:
         """
-        viewAFM(self.get_imgs(), interactive=True, **kwargs)
+        # viewAFM(self.get_imgs(), interactive=True, **kwargs)
+        AFMfitViewer(self).view(**kwargs)
+
+
 
     def show_angular_distr(self, **kwargs):
         """

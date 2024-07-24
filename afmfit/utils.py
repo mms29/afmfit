@@ -32,7 +32,19 @@ import warnings
 import pathlib
 import platform
 
-
+def get_flattest_angles(pdb, percent=10.0, angular_dist=10):
+    # Limit to flat orientations
+    angles = get_sphere_full(angular_dist=angular_dist)
+    zsize = np.zeros(angles.shape[0])
+    for i in range(angles.shape[0]):
+        cop = pdb.copy()
+        cop.rotate(angles[i])
+        zsize[i] = cop.coords[:, 2].max() - cop.coords[:, 2].min()
+    sorted_angles = angles[np.argsort(zsize)]
+    if percent==0.0:
+        return sorted_angles[[0]]
+    else:
+        return sorted_angles[: int(len(sorted_angles) / (100/percent))]
 def align_coords(coords, ref, match=None):
     aligned_coords = np.zeros(coords.shape, dtype=np.float32)
     tmp = ref.copy()
@@ -132,7 +144,7 @@ class DimRed:
     def show(self, cval=None, ax=None, points=None, cname=None, cmap="viridis", alpha=0.8):
         if ax is None:
             ax = [0, 1]
-        fig, axp = plt.subplots(1, 1, figsize=(5, 3), layout="constrained")
+        fig, axp = plt.subplots(1, 1, figsize=(8,6), layout="constrained")
         if cval is not None:
             sc = axp.scatter(self.data[:, ax[0]], self.data[:, ax[1]], c=cval, cmap=cmap, alpha=alpha)
             cbar = fig.colorbar(sc, ax=axp)
@@ -147,6 +159,7 @@ class DimRed:
         axname = "PC" if self.method=="pca" else "UMAP"
         axp.set_xlabel(axname + str(ax[0]))
         axp.set_ylabel(axname + str(ax[1]))
+        axp.axes.set_aspect('equal')
         fig.show()
 
     def show_density(self, ax, resolution=20, cmap="Blues_r", interpolation="spline36"):
@@ -195,6 +208,22 @@ class DimRed:
             self.viewAxisChimera(traj=traj, align=align, align_ref=align_ref, prefix=prefix)
 
     def viewAxisChimera(self, traj=None, cluster =None, align=False, align_ref=None, prefix=None):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            if prefix is not None:
+                tmpdir = prefix
+            self.output_traj(traj=traj, cluster=cluster, align=align, align_ref=align_ref, prefix=tmpdir)
+            if cluster is not None:
+                n_points = len(set(cluster))
+            elif traj is not None:
+                n_points = len(traj)
+            with open(tmpdir + "traj.cxc", "w") as f:
+                for i in range(n_points):
+                    f.write("open %straj%i.pdb \n" % (tmpdir, i + 1))
+                f.write("morph #1-%i \n" % (n_points))
+            run_chimerax(tmpdir +"traj.cxc")
+
+
+    def output_traj(self, traj=None, cluster =None, align=False, align_ref=None, prefix=None):
         if cluster is not None:
             coords = self.cluster2coords(cluster)
             n_points = len(set(cluster))
@@ -211,26 +240,12 @@ class DimRed:
             if align_ref is None:
                 align_ref = self.pdb
             match = self.pdb.matchPDBatoms(align_ref)
-
-        # numpyArr2dcd(coords, tmpdir+"traj.dcd")
-        # dimred.pdb.write_pdb(tmpdir+"pdb.dcd")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            if prefix is not None:
-                tmpdir = prefix
-            for i in range(n_points):
-                tmp = self.pdb.copy()
-                tmp.coords = coords[i]
-                if align:
-                    tmp = tmp.alignMol(align_ref, idx_matching_atoms=match)
-                tmp.write_pdb("%straj%i.pdb" % (tmpdir, i + 1))
-
-            with open(tmpdir + "traj.cxc", "w") as f:
-                for i in range(n_points):
-                    f.write("open %straj%i.pdb \n" % (tmpdir, i + 1))
-                f.write("morph #1-%i \n" % (n_points))
-
-            run_chimerax(tmpdir +"traj.cxc")
+        for i in range(n_points):
+            tmp = self.pdb.copy()
+            tmp.coords = coords[i]
+            if align:
+                tmp = tmp.alignMol(align_ref, idx_matching_atoms=match)
+            tmp.write_pdb("%straj%i.pdb" % (prefix, i + 1))
 
 def afm_reconstruct(stk, angles, shifts, mask=None, order=1, operation=1, vsize=1.0):
     nimg = len(stk)

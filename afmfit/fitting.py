@@ -497,14 +497,23 @@ class Fitter:
             n_best_views = self.rigid_angles.shape[1]
 
         # Create pool
-        p = Pool(n_cpu, initializer=self.init_flexible_processes, initargs=(rmsdsRawArray,anglesRawArray,
-                                shiftsRawArray, msesRawArray, coordsRawArray, etaRawArray, imgsRawArray,
-                                nma, n_iter, n_best_views, dist_views, plot, lambda_r, lambda_f))
+        if n_cpu >1:
+            p = Pool(n_cpu, initializer=self.init_flexible_processes, initargs=(rmsdsRawArray,anglesRawArray,
+                                    shiftsRawArray, msesRawArray, coordsRawArray, etaRawArray, imgsRawArray,
+                                    nma, n_iter, n_best_views, dist_views, plot, lambda_r, lambda_f))
 
-        # Run Pool
-        for _ in tqdm.tqdm(p.imap_unordered(self.run_flexible_processes, workdata), total=len(workdata), desc="Flexible Fitting"
-                           , disable=not verbose):
-            pass
+            # Run Pool
+            for _ in tqdm.tqdm(p.imap_unordered(self.run_flexible_processes, workdata), total=len(workdata), desc="Flexible Fitting"
+                               , disable=not verbose):
+                pass
+        else:
+            self.init_flexible_processes(rmsdsRawArray, anglesRawArray,
+                                                      shiftsRawArray, msesRawArray, coordsRawArray, etaRawArray,
+                                                      imgsRawArray,
+                                                      nma, n_iter, n_best_views, dist_views, plot, lambda_r, lambda_f)
+            for w in workdata:
+                self.run_flexible_processes(w)
+
 
         # Outputs
         self.flexible_mses = frombuffer(msesRawArray, dtype=np.float64,
