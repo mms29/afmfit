@@ -13,10 +13,12 @@
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-from afmfit.utils import get_sphere_full
+from afmfit.utils import get_sphere_full, get_dmax, get_flattest_angles, avg_radial_profile, get_cc
 from afmfit.image import ImageLibrary
 
+
 import numpy as np
+import matplotlib.pyplot as plt
 from numba import njit
 import os
 import tqdm
@@ -24,22 +26,21 @@ from multiprocessing.sharedctypes import RawArray
 from numpy import frombuffer
 from multiprocessing import Pool
 
+CUTOFF_10PERCENT_RATIO = 13.0
+CUTOFF_50PERCENT_RATIO = 9.9
+CUTOFF_80PERCENT_RATIO = 6.2
+
 class AFMSimulator:
 
-    def __init__(self, size, vsize, beta, sigma, cutoff, ):
-        """
-
-        :param size:
-        :param vsize:
-        :param beta:
-        :param sigma:
-        :param cutoff:
-        """
+    def __init__(self, size, vsize, sigma, quality_ratio=13.0 ,cutoff="auto",  beta=1.0):
         self.size=size
         self.vsize=vsize
         self.beta=beta
         self.sigma=sigma
-        self.cutoff=cutoff
+        if cutoff == "auto":
+            cutoff=quality_ratio * sigma
+        else:
+            cutoff=cutoff
         self.n_pix_cutoff = int(np.ceil(cutoff / vsize) * 2 + 1)
 
     def pdb2afm(self, pdb, zshift=None):
@@ -106,7 +107,7 @@ class AFMSimulator:
         for i in range(nviews):
             view_group[i] = arr + i * ngroup
 
-        return ImageLibrary(imageLibrarySharedArray, nimgs = n_imgs, size= self.size, vsize=self.vsize,
+        return ImageLibrary(imageLibrarySharedArray, nimg = n_imgs, size= self.size, vsize=self.vsize,
                             angles = angles_z, z_shifts=z_shifts, view_group=view_group)
 
     def afmize(self, amfize_path, pdb, probe_r, probe_a, noise, prefix):
@@ -267,3 +268,58 @@ def _select_pixels(coord, size, voxel_size, n_pix_cutoff):
         # print("WARNING : Atomic coordinates got outside the box")
     return pix
 
+
+
+def sigma_estimate(imgs, pdb, n_cpu, resolution = 0.5, angle_precent = 20.0,angular_dist = 40, quality_ratio=10.0,
+                   lower_dmax=0.1, upper_dmax=1.0, max_nangle = 100, max_sigma=15.0, min_sigma=2.0, init_zshift=None):
+    ii_exp = avg_radial_profile(imgs)
+    freqs = np.arange(ii_exp.shape[0]) / (imgs.sizex * imgs.vsize )
+
+    angle = get_flattest_angles(pdb, percent=angle_precent, angular_dist=angular_dist)
+    if len(angle)> max_nangle:
+        angle = angle[np.random.choice(np.arange(len(angle)), max_nangle, replace=False)]
+
+    sigma_linspace = np.arange(min_sigma,max_sigma,resolution)
+    npoints = len(sigma_linspace)
+    iis = []
+    for sigma in sigma_linspace:
+        proj= AFMSimulator(size=imgs.sizex, vsize=imgs.vsize, sigma=sigma, quality_ratio=quality_ratio).project_library(
+            n_cpu=n_cpu, pdb=pdb, angular_dist=angular_dist, init_zshift = init_zshift, verbose=True,
+            zshift_range=[0],init_angles=angle)
+        iis.append(avg_radial_profile(proj))
+        del proj
+    iis= np.array(iis)
+
+
+    dmax = get_dmax(pdb)
+    lower_dmax *= dmax
+    upper_dmax *= dmax
+    lower = upper_dmax  > 1/freqs
+    upper = lower_dmax< 1/freqs
+    indexes = lower*upper
+    corr = [get_cc(ii_exp[indexes], iis[i][indexes]) for i in range(npoints)]
+    max_corr = np.argmax(corr)
+    sigma_est = sigma_linspace[max_corr]
+
+    fig, ax = plt.subplots(1,1)
+    ax.plot(sigma_linspace, corr , "x-")
+    ax.plot(sigma_est, corr[max_corr] , "o", color="red")
+    ax.set_xlabel("sigma")
+    ax.set_ylabel("Correlation")
+    fig.show()
+
+    fig, ax = plt.subplots(1,1, figsize=(15,5))
+    cmap = plt.get_cmap('viridis')
+    ax.plot(freqs, ii_exp, "x-", color="black", label="input")
+    for i in range(len(iis)):
+        ax.plot(freqs, iis[i],  "x-", color=cmap(i/len(iis)), alpha=0.5, label="s=%s"%str(sigma_linspace[i]))
+    ax.axvline(1/ lower_dmax, c="r")
+    ax.axvline(1/ upper_dmax, c="r")
+    ax.set_yscale("log")
+    ax.set_xscale("log")
+    ax.set_xlabel("Spatial freqs ($\AA^{-1})$")
+    ax.set_ylabel("Averaged spectral density")
+    plt.legend()
+    fig.show()
+
+    return sigma_est

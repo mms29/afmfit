@@ -51,28 +51,35 @@ class ProjMatch:
         self.best_mse = None
         self.best_fitted_img = None
 
-    def run(self, library,  verbose=True, select_view_group=True):
+    def run(self, library, metric="mse",  verbose=True, select_view_group=True):
         """
         Run projection matching
         :param library: ImageLibrary projection library
+        :param metric: metric to use for the matching : mse | corr | cc
         :param verbose:
         :param select_view_group: if True, returns the min MSE angles and shifts for each view group
         """
         img_exp = self.img
         img_exp_norm = np.sum(np.square(img_exp))
-        nimgs = library.nimgs
+        nimgs = library.nimg
 
         # outputs
-        mse =    np.zeros((nimgs))
+        metrics =    np.zeros((nimgs))
         shifts = np.zeros((nimgs, 3))
 
         for i in tqdm.tqdm(range(nimgs), desc="Projection Matching", disable=not verbose):
             # Rotational Translational XY matching
-            _x, _y, _c = self.trans_match(library.get_img(i),  img_exp)
+            img = library.get_img(i)
+            _x, _y, _c = self.trans_match(img,  img_exp)
 
-            # calculate mse from correlation
-            # mse[i] = library.norm2[i] + img_exp_norm -2*_c
-            mse[i] = np.sum(np.square(library.get_img(i))) + img_exp_norm -2*_c
+            if metric == "mse":
+                # calculate mse from correlation
+                metrics[i] = np.sum(np.square(img)) + img_exp_norm -2*_c
+            elif metric == "corr":
+                metrics[i] = -_c
+            elif metric == "cc":
+                metrics[i] = -    _c / ( np.sqrt(np.sum(np.square(img))) * np.sqrt(img_exp_norm))
+
 
             # set the shifts
             shifts[i,0] =_x *  self.vsize
@@ -81,30 +88,30 @@ class ProjMatch:
 
         # select the best MSE for each view group
         if select_view_group:
-            min_mse_group = library.view_group[
-                (np.arange(library.nview), np.argmin(mse[library.view_group], axis=1))]
+            min_metric_group = library.view_group[
+                (np.arange(library.nview), np.argmin(metrics[library.view_group], axis=1))]
         else:
-            min_mse_group = np.arange(nimgs)
-        self.shifts = shifts[min_mse_group]
-        self.mse = mse[min_mse_group]
-        self.angles = library.angles[min_mse_group]
+            min_metric_group = np.arange(nimgs)
+        self.shifts = shifts[min_metric_group]
+        self.mse = metrics[min_metric_group]
+        self.angles = library.angles[min_metric_group]
 
         # Outputs
-        minmse = np.argmin(self.mse)
-        self.best_angle = self.angles[minmse]
-        self.best_shift = self.shifts[minmse]
+        bestidx = np.argmin(self.mse)
+        self.best_angle = self.angles[bestidx]
+        self.best_shift = self.shifts[bestidx]
         fit = self.pdb.copy()
         fit.rotate(self.best_angle)
         fit.translate(self.best_shift)
         img = self.simulator.pdb2afm(fit, 0.0)
-        best_mse_calc = self.mse[minmse]
         self.best_mse = np.sum(np.square( img - img_exp))
+        self.best_mse_calc = self.mse[bestidx]
         self.best_fitted_img = img
 
         if verbose:
             print("DONE")
-            print("Calculated MSE : %f"%np.sqrt(best_mse_calc))
-            print("Actual MSE : %f"%np.sqrt(self.best_mse))
+            print("Calculated MSE : %f"%self.best_mse_calc)
+            print("Actual MSE : %f"%self.best_mse)
 
     def show(self, n_plot=3):
         """
@@ -394,7 +401,7 @@ class Fitter:
 
     def fit_rigid(self, n_cpu, angular_dist=10.0, verbose=False, zshift_range=None,
                   init_zshift=None, near_angle=None, near_angle_cutoff=None, select_view_group = True,
-                  true_zshift=True, init_library=None):
+                  true_zshift=True, init_library=None, metric="mse", init_angles=None):
         """
         Performs the rigid fitting on the set of images
         :param n_cpu: Number of CPUs
@@ -407,6 +414,8 @@ class Fitter:
         :param select_view_group: if True, returns the min MSE angles and shifts for each view group
         :param true_zshift: if False, the z shift are estimated by shifting the entire image (faster but less accurate)
         :param init_library: uses an input library of images instead of generating a new one
+        :param metric: metric to use for the fitting : mse | corr | cc
+        :param init_angles: provide a list of projection angles
         """
         dt = time.time()
 
@@ -418,14 +427,14 @@ class Fitter:
         if init_library is None:
             library = self.simulator.project_library(n_cpu=n_cpu, pdb=self.pdb,  angular_dist=angular_dist, verbose=verbose,
                         zshift_range=zshift_range, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff,
-                                                     init_zshift=init_zshift, true_zshift=true_zshift)
+                                                     init_zshift=init_zshift, true_zshift=true_zshift, init_angles=init_angles)
         else:
             library = init_library
 
         if select_view_group:
             nview = library.nview
         else:
-            nview = library.nimgs
+            nview = library.nimg
 
         workdata=[]
         for i in range(self.nimgs):
@@ -440,7 +449,8 @@ class Fitter:
 
         # run
         p = Pool(n_cpu, initializer=self.init_rigid_processes, initargs=(library, anglesRawArray,
-                    shiftsRawArray,msesRawArray,imgsRawArray, self.nimgs, nview, self.simulator.size,select_view_group))
+                    shiftsRawArray,msesRawArray,imgsRawArray, self.nimgs, nview, self.simulator.size,
+                    select_view_group, metric))
         for _ in tqdm.tqdm(p.imap_unordered(self.run_rigid_processes, workdata), total=len(workdata),
                            desc="Projection Matching", disable=not verbose):
             pass
@@ -541,13 +551,14 @@ class Fitter:
 
 
     def init_rigid_processes(self, library,anglesRawArray,shiftsRawArray, msesRawArray,imgsRawArray, nimgs,
-                                 nview,size, select_view_group):
+                                 nview,size, select_view_group, metric):
         global library_global
         global angles_global
         global shifts_global
         global mses_global
         global imgs_global
         global select_view_group_global
+        global metric_global
         library_global = library
 
         angles_global = frombuffer(anglesRawArray, dtype=np.float64,
@@ -560,6 +571,7 @@ class Fitter:
         imgs_global = frombuffer(imgsRawArray, dtype=np.float32,
                                    count=len(imgsRawArray)).reshape(nimgs, size, size)
         select_view_group_global = select_view_group
+        metric_global = metric
 
 
     def run_rigid_processes(self, workdata):
@@ -570,7 +582,8 @@ class Fitter:
         rank = workdata[0]
 
         projMatch = ProjMatch(img=self.imgs[rank], simulator=self.simulator, pdb=self.pdb)
-        projMatch.run(library=library_global, verbose=False, select_view_group=select_view_group_global)
+        projMatch.run(library=library_global, verbose=False, select_view_group=select_view_group_global,
+                      metric=metric_global)
 
         idx_best_views =np.argsort(projMatch.mse)
         angles_global[rank,:] = projMatch.angles[idx_best_views]
@@ -622,13 +635,7 @@ class Fitter:
         :param workdata:
         """
         rank = workdata[0]
-        img = self.imgs[rank]
 
-        if plot_global:
-            plotter = FittingPlotter()
-            plotter.start(img, img, [0.0], [0.0])
-        else:
-            plotter = None
         nmafits = []
 
         # Select the views to process
@@ -644,9 +651,9 @@ class Fitter:
 
             # Fit the image with NMA
             nmafit = NMAFit()
-            nmafit.fit(img=img, nma=tnma, simulator=self.simulator, target_pdb=self.target_pdbs[rank],
+            nmafit.fit(img=self.imgs[rank], nma=tnma, simulator=self.simulator, target_pdb=self.target_pdbs[rank],
                        n_iter=n_iter_global, lambda_r=lambda_r_global, lambda_f=lambda_f_global, verbose=False,
-                       plot=plot_global, init_plotter=plotter)
+                       plot=plot_global)
             nmafits.append(nmafit)
 
         # Outputs
@@ -659,10 +666,6 @@ class Fitter:
         shifts_global[rank] = nmafits[best_nma_idx].best_shift
         imgs_global[rank] = nmafits[best_nma_idx].best_fitted_img
 
-        if plot_global:
-            plotter.update(nmafits[best_nma_idx].best_fitted_img, img, mses_global[rank], rmsds_global[rank],
-                           mse_a=[f.mse for f in nmafits],
-                           rmsd_a=[f.rmsd for f in nmafits])
     def show_rigid(self):
         """
         Show the angular distribution of the rigid fitting

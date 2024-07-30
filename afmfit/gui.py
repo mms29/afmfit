@@ -6,11 +6,12 @@ import numpy as np
 import mrcfile
 from afmfit.pdbio import PDB,  dcd2numpyArr, numpyArr2dcd
 from afmfit.nma import NormalModesRTB
-from afmfit.simulator import AFMSimulator
+from afmfit.simulator import AFMSimulator, sigma_estimate
 from afmfit.viewer import viewAFM, viewFit, show_angular_distr
 from afmfit.image import mask_stk, mask_interactive, Particles
 from afmfit.fitting import Fitter
-from afmfit.utils import  DimRed, align_coords,get_sphere_full, get_angular_distance, get_init_angles_flat
+from afmfit.utils import  DimRed, align_coords,get_sphere_full, get_angular_distance, \
+    get_init_angles_flat
 import matplotlib.pyplot as plt
 import matplotlib
 from afmfit.image import ImageSet
@@ -22,7 +23,6 @@ NavigationToolbar2Tk)
 from tkinter.filedialog import askopenfilename, asksaveasfilename, askdirectory
 from afmfit.utils import get_flattest_angles
 import copy
-from afmfit.simulator import AFMSimulator
 from tkinter import messagebox
 from tkinter import scrolledtext
 from functools import partial
@@ -39,9 +39,11 @@ default_font = ("calibri", 15)
 large_font = ("calibri", 18)
 
 bg_color = '#d9d9d9'
-button_color ='#d9d9d9'
-completed_color = "lime"
-failed_color = "orange"
+button_color ='#000000'
+completed_color = "#458B00"
+failed_color = "#CD3333"
+
+
 class AFMfitImsetFrame:
     def __init__(self, imset, frame, update_callback=None, **kwargs):
         self.imset = copy.deepcopy(imset)
@@ -175,7 +177,7 @@ class AFMfitPreprocessing(AFMfitViewer):
                   command=self.resetUpdate).grid(row=2, column=0, sticky="W")
 
         tk.Button(master=toolsFrame, command=self.quit, height=1, width=10,
-                  text="Done", bg=completed_color).grid(row=10, column=0, sticky="SE")
+                  text="Done", fg=completed_color).grid(row=10, column=0, sticky="SE")
 
     def normalizeUpdate(self):
         self.mainImageFrame.imset.normalize_mode()
@@ -205,7 +207,8 @@ class AFMfitPicker(AFMfitViewer):
     def get_centroids(self, ):
         frame = self.mainImageFrame.imset.get_img(self.mainImageFrame.get_current()).T[::-1]
         data = tp.locate(frame, **self.get_trackpy_args())
-        return np.array(data["x"]), (np.array(data["y"]))
+        vsize= self.mainImageFrame.imset.vsize/10.0
+        return np.array(data["x"])*vsize, (np.array(data["y"])*vsize)
 
     def update_pickingFrame(self, event=None):
         centroids = self.get_centroids()
@@ -314,7 +317,7 @@ class AFMfitPicker(AFMfitViewer):
                             , command=self.update_pad, length=200)
         self.padScale.grid(row=7, column=0, sticky="W")
 
-        extractButton = tk.Button(master=toolsFrame, command=self.extract_particles, height=1, width=10, text="Done", bg=completed_color)
+        extractButton = tk.Button(master=toolsFrame, command=self.extract_particles, height=1, width=10, text="Done", fg=completed_color)
         extractButton.grid(row=1, column=0, sticky="W")
 
         reset()
@@ -333,77 +336,55 @@ class AFMfitPicker(AFMfitViewer):
 
 
 class AFMfitSimulatorViewer(AFMfitViewer):
-    def __init__(self, pdb, refimage=None, init_sim=None):
-        super().__init__(ImageSet(np.zeros((1,100,100)),1.0))
+    def __init__(self, pdb, init_sim, refimage=None):
+        super().__init__(ImageSet(np.zeros((1,init_sim.size,init_sim.size)),init_sim.vsize))
         self.pdb=pdb
         self.refimage = refimage
         self.sim = None
         self.init_sim=init_sim
 
 
-    def reset(self):
-        if self.init_sim is None:
-            self.sim_size.set(100)
-            self.sim_vsize.set(1.0)
-            self.sim_beta.set(1.0)
-            self.sim_sigma.set(5.0)
-            self.sim_cutoff.set(4.0)
-        else:
-            self.sim_size.set(self.init_sim.size*self.init_sim.vsize/10)
-            self.sim_vsize.set(self.init_sim.vsize/10)
-            self.sim_beta.set(self.init_sim.beta)
-            self.sim_sigma.set(self.init_sim.sigma)
-            self.sim_cutoff.set(self.init_sim.cutoff/10.0)
-
     def setup_simulatorFrame(self, toolsFrame):
-        self.sim_size = tk.IntVar()
-        self.sim_vsize =tk.DoubleVar()
-        self.sim_beta = tk.DoubleVar()
         self.sim_sigma = tk.DoubleVar()
-        self.sim_cutoff = tk.DoubleVar()
+        self.sim_quality = tk.DoubleVar()
+        self.sim_sigma.set(self.init_sim.sigma)
+        self.sim_quality.set(8.0)
 
-        self.reset()
         self.update_simulator()
         self.update_image()
 
 
         simulatorFrame = tk.Frame(master=toolsFrame)
         simulatorFrame.grid(row=0, column=0, sticky="W")
-        simlabel = tk.Label(simulatorFrame, text="Simulator tools",font=default_font)
-        simlabel.grid(row=0, column=0, sticky="W")
-        sizeScale = tk.Scale(simulatorFrame, from_=10,
-                                  to=500, variable=self.sim_size,
-                                  orient=tk.HORIZONTAL, label="Size (nm)", resolution=2
-                                  , command=self.update_simulatorFrame, length=200)
-        sizeScale.grid(row=2, column=0, sticky="W")
-        vsizeScale = tk.Scale(simulatorFrame, from_=0.5,
-                                  to=3.0, variable=self.sim_vsize,
-                                  orient=tk.HORIZONTAL, label="Pixel size (nm/px)", resolution=0.1
-                                  , command=self.update_simulatorFrame, length=200)
-        vsizeScale.grid(row=3, column=0, sticky="W")
-        sigmaScale = tk.Scale(simulatorFrame, from_=1.0,
-                                  to=10.0, variable=self.sim_sigma,
+
+        tk.Label(simulatorFrame, text="Simulator tools",font=default_font).grid(row=0, column=0, sticky="W")
+
+        tk.Scale(simulatorFrame, from_=1.0,
+                                  to=15.0, variable=self.sim_sigma,
                                   orient=tk.HORIZONTAL, label="Smoothness", resolution=0.1
-                                  , command=self.update_simulatorFrame, length=200)
-        sigmaScale.grid(row=4, column=0, sticky="W")
-        cutoffScale = tk.Scale(simulatorFrame, from_=1.0,
-                                  to=10.0, variable=self.sim_cutoff,
-                                  orient=tk.HORIZONTAL, label="Cutoff (nm)", resolution=0.2
-                                  , command=self.update_simulatorFrame, length=200)
-        cutoffScale.grid(row=5, column=0, sticky="W")
+                                  , command=self.update_simulatorFrame, length=200).grid(row=1, column=0, sticky="W")
+
+        tk.Button(master=simulatorFrame, command=self.autoSigma, height=1, width=10, text="Auto").grid(row=2, column=0, sticky="W")
+
+
+        tk.Scale(simulatorFrame, from_=1.0,
+                                  to=13.0, variable=self.sim_quality,
+                                  orient=tk.HORIZONTAL, label="Quality", resolution=0.1
+                                  , command=self.update_simulatorFrame, length=200).grid(row=3, column=0, sticky="W")
+
 
         pdbFrame = tk.Frame(master=toolsFrame)
         pdbFrame.grid(row=1, column=0, sticky="W")
-        pdblabel = tk.Label(pdbFrame, text="PDB tools", font=default_font)
-        pdblabel.grid(row=0, column=0, sticky="W")
 
-        centerButton = tk.Button(master=pdbFrame, command=self.centerPDB, height=1, width=10, text="Center")
-        centerButton.grid(row=1, column=0, sticky="W")
-        orientButton = tk.Button(master=pdbFrame, command=self.orientPDB, height=1, width=10, text="Orient")
-        orientButton.grid(row=1, column=1, sticky="W")
+        tk.Label(pdbFrame, text="PDB tools", font=default_font).grid(row=0, column=0, sticky="W")
 
-        doneButton = tk.Button(master=toolsFrame, command=self.quit, height=1, width=10, text="Done", bg=completed_color)
-        doneButton.grid(row=2, column=0, sticky="W")
+        tk.Button(master=pdbFrame, command=self.centerPDB, height=1, width=10, text="Center")\
+            .grid(row=1, column=0, sticky="W")
+        tk.Button(master=pdbFrame, command=self.orientPDB, height=1, width=10, text="Orient")\
+            .grid(row=1, column=1, sticky="W")
+
+        tk.Button(master=toolsFrame, command=self.quit, height=1, width=10, text="Done", fg=completed_color)\
+            .grid(row=2, column=0, sticky="W")
 
         self.mainImageFrame.update_imageFrame()
 
@@ -420,22 +401,37 @@ class AFMfitSimulatorViewer(AFMfitViewer):
         self.update_image()
         self.mainImageFrame.update_imageFrame()
     def update_simulator(self):
-        vsize = float(self.sim_vsize.get()*10.0)
-        size = int(self.sim_size.get() * 10 / vsize)
-        self.sim = AFMSimulator( size=size,
-                                 vsize=vsize,
-                                 beta=float(self.sim_beta.get()),
+        self.sim = AFMSimulator( size=self.init_sim.size,
+                                 vsize=self.init_sim.vsize,
                                 sigma=float(self.sim_sigma.get()),
-                                 cutoff=float(self.sim_cutoff.get() *10.0))
+                                 quality_ratio=float(self.sim_quality.get()) )
     def update_image(self):
         im = self.sim.pdb2afm(self.pdb)
-        self.mainImageFrame.imset = ImageSet(np.array([im]), vsize=self.sim_vsize)
+        self.mainImageFrame.imset = ImageSet(np.array([im]), vsize=self.init_sim.vsize)
     def update_simulatorFrame(self, event=None):
         self.update_simulator()
         self.update_image()
         self.mainImageFrame.update_imageFrame()
+    def autoSigma(self):
+        params = ParamWindow(
+            "Parameters",
+            self.window,
+            {
+                "n_cpu": ["Num of CPUs", "Integer", 4, "Number of available CPU cores"],
+                "resolution": ["Resolution", "Float", 0.5, "Resolution of estimation of sigma (minimum spacing)"],
+                "angular_dist": ["Angular dist. between reprojections (°)", "Integer", 10, ""],
+                "angle_precent": ["% angle", "Float", 20.0, ""],
+                "lower_dmax": ["% of Dmax lower", "Float", 0.1, ""],
+                "upper_dmax": ["% of Dmax upper", "Float", 1.0, ""],
+                "max_nangle": ["max num angle", "Integer",100, ""],
+                "max_sigma": ["max sigma", "Float", 15.0, ""],
+                "min_sigma": ["min sigma", "Float", 2.0, ""],
+            }
+        ).get_params()
 
-
+        sigma = sigma_estimate(imgs = self.refimage, pdb=self.pdb, quality_ratio=float(self.sim_quality.get()),**params)
+        self.sim_sigma.set(sigma)
+        self.update_simulatorFrame()
     def setup_frames(self, **kwargs):
         mplFrame = tk.Frame(master=self.window)
         mplFrame.grid(row=0, column=0)
@@ -510,12 +506,12 @@ class AFMFitMenu:
         #colors
         for i in range(nactions):
             if i<self.get_state():
-                self.actionButtons[i].config(bg=completed_color)
+                self.actionButtons[i].config(fg=completed_color)
             else:
                 if i==self.get_state() and self.get_status():
-                    self.actionButtons[i].config(bg=failed_color)
+                    self.actionButtons[i].config(fg=failed_color)
                 else:
-                    self.actionButtons[i].config(bg=button_color)
+                    self.actionButtons[i].config(fg=button_color)
 
 
     def setup_window(self):
@@ -547,7 +543,7 @@ class AFMFitMenu:
 
 
     def setup_console(self, frame):
-        console_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, bg="black", fg="white", width=55)
+        console_text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, bg=button_color, fg=bg_color, width=55)
         console_text.grid(row=0, column=0)
         self.console_redirector = ConsoleRedirector(console_text)
 
@@ -621,19 +617,23 @@ class AFMFitMenu:
 
         self.update_actionButton()
     def importAFMdata(self):
-        file = askopenfilename(filetypes=[ ('ASD files', '*.asd'), ('TIFF files', '*.tif *.tiff')])
+        file = askopenfilename(filetypes=[ ('ASD files', '*.asd'), ('TIFF files', '*.tif *.tiff'), ('Text files', '*.txt')])
 
         if os.path.isfile(file):
             name, ext = os.path.splitext(file)
-            if ext == ".tiff" or ext == ".tif":
+            if ext == ".tiff" or ext == ".tif" or ext == ".txt":
                 params = ParamWindow(
                     "Enter pixel size",
                     self.window,
                     {
                         "vsize": ["Pixel Size (nm)", "Float", 1.0, "Specify the pixel size of the AFm data"],
+                        "unit": ["Z-scale unit (nm)", "Float", 1.0, "Specify the unit of the zscale. 1.0 = Nanometer, 0.1 = Angstrom, 1e9 = meter "],
                     }
                 ).get_params()
-                self.data["imset"] = ImageSet.read_tif(file, vsize=params["vsize"]*10.0,unit="nm")
+                if ext == ".tiff" or ext == ".tif" :
+                    self.data["imset"] = ImageSet.read_tif(file, vsize=params["vsize"]*10.0,unit=params["unit"]*10.0)
+                else:
+                    self.data["imset"] = ImageSet.read_txt(file, vsize=params["vsize"]*10.0,unit=params["unit"]*10.0)
             elif ext == ".asd":
                 self.data["imset"] = ImageSet.read_asd(file)
             else:
@@ -707,7 +707,8 @@ class AFMFitMenu:
             {
                 "ncpu": ["Number of CPUs", "Integer", multiprocessing.cpu_count()//2, "Number of CPU cores to use"],
                 "angular_dist": ["Angular distance (°)", "Float", 10.0, "Minimum angular distance between projected views"],
-                "flatonly": ["Flat orientation only", "Bool", True, "Use only projectino views that keeps the model flat relative to the Z-axis"],
+                "flatonly": ["Flat orientation only", "Bool", True, "Use only projection views that keeps the model flat relative to the Z-axis"],
+                "flatper": ["% of flatness", "Float", 10.0, "Keep only the N% flattest angles", "flatonly"],
                 "zshift_range": ["Z-shift range (Ang)", "Float", 20.0,
                              "Range of search in the z-shift direction"],
                 "zshift_resolution": ["Z-shift resolution (points)", "Integer", 10,
@@ -717,12 +718,9 @@ class AFMFitMenu:
             }
         ).get_params()
         if params["flatonly"]:
-            near_angle=[0,0,0]
-            near_angle_cutoff = 10.0
+            angle = get_flattest_angles(self.data["pdb"], angular_dist=int(params["angular_dist"]), percent=params["flatper"])
         else:
-            near_angle=None
-            near_angle_cutoff = None
-
+            angle = None
         self.window.config(cursor="watch")
         self.window.update()
         fitter.fit_rigid(n_cpu=params["ncpu"],
@@ -732,8 +730,7 @@ class AFMFitMenu:
                                                   params["zshift_range"]//2,
                                                   params["zshift_resolution"]),
                          init_zshift=None,
-                         near_angle=near_angle,
-                         near_angle_cutoff=near_angle_cutoff,
+                         init_angles = angle,
                          select_view_group = True,
                          true_zshift=params["true_zshift"],
                          init_library=None)
@@ -822,7 +819,9 @@ class AFMFitMenu:
             self.window,
             {
                 "n_components": ["Number of PCA components", "Integer", 10, ""],
-                "method": ["Method", "String", "pca", "Either \"pca\" or \"umap\""],
+                "method": ["Method", "Enum", "PCA", "principal component analysis (PCA) or "
+                                                    "uniform manifold approximation and projection (UMAP)",
+                           ["PCA", "UMAP"]],
 
             }
         ).get_params()
@@ -836,11 +835,12 @@ class AFMFitMenu:
             "Parameters",
             self.window,
             {
-                "axis": ["Axis", "Integer", 1, ""],
-                "n_points": ["Number of points", "Integer", 10, ""],
-                "traj": ["Spacing", "Enum", "Linear", "", ["Linear", "Percentiles"]],
-                "avg": ["Reconstruction method", "Enum", "Inverse", "", ["Inverse", "Average"]],
-                "align": ["Align PDBs ?", "Bool", "True", ""],
+                "axis": ["Axis", "Integer", 1, "Axis along which the trajectory is drawn"],
+                "n_points": ["Number of points", "Integer", 10, "Num of points in the trajectory"],
+                "traj": ["Spacing", "Enum", "Linear", "spacing of points in the trajectory", ["Linear", "Percentiles"]],
+                "avg": ["Reconstruction method", "Enum", "Inverse", "Inverse (PCA only) :  calculate inverse projection from PCA space to 3D coordinates"
+                                                                    "Average : the closest conformation from each points of the trajectory are averaged", ["Inverse", "Average"]],
+                "align": ["Align PDBs ?", "Bool", "True", "Rigid alignement of the fitted models to the reference"],
 
             }
         ).get_params()
@@ -937,11 +937,10 @@ class ParamWindow:
 
     def start(self):
         self.window = tk.Toplevel(self.toplevel)
+        self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.window.title(self.name)
-        # self.window.geometry("600x600")
         self.window.transient(self.toplevel)
         self.window.grab_set()
-
 
         self.setup_params()
 
@@ -997,6 +996,10 @@ class ParamWindow:
                 tk.Button(self.window, command=partial(self.info, self.get_info(k)) , text='Info').grid(row=i, column=2)
         tk.Button(self.window, command=self.window.destroy , text='Done').grid(row=len(self.params), column=0)
 
+
+    def on_closing(self):
+        self.window.destroy()
+
 class ConsoleRedirector:
     def __init__(self, console_text):
         self.console_text = console_text
@@ -1030,4 +1033,6 @@ class ConsoleRedirector:
 if __name__ == "__main__":
     menu = AFMFitMenu()
     menu.view()
+
+
 

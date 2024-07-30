@@ -31,6 +31,8 @@ import shutil
 import warnings
 import pathlib
 import platform
+import tqdm
+
 
 def get_flattest_angles(pdb, percent=10.0, angular_dist=10):
     # Limit to flat orientations
@@ -245,7 +247,7 @@ class DimRed:
             tmp.coords = coords[i]
             if align:
                 tmp = tmp.alignMol(align_ref, idx_matching_atoms=match)
-            tmp.write_pdb("%straj%i.pdb" % (prefix, i + 1))
+            tmp.write_pdb("%straj%s.pdb" % (prefix, str(i + 1).zfill(4)))
 
 def afm_reconstruct(stk, angles, shifts, mask=None, order=1, operation=1, vsize=1.0):
     nimg = len(stk)
@@ -526,3 +528,38 @@ def get_init_angles_flat(pdb, percent=0.1, angular_dist=10):
         zsize[i] = cop.coords[:,2].max() - cop.coords[:,2].min()
     init_angles = angles[zsize<np.percentile(zsize, percent)]
     return init_angles
+
+
+def radial_profile(imgpsd):
+    size = imgpsd.shape[0]
+    size2 = size//2
+    maxRadius = int(np.ceil(np.sqrt(size2**2 + size2**2)))
+    radialProfile = np.zeros(maxRadius, dtype=imgpsd.dtype)
+    count = np.zeros(maxRadius, dtype=imgpsd.dtype)
+    for col in range(size):
+        for  row in range(size):
+            radius = np.sqrt((row - size2) ** 2 + (col - size2) ** 2)
+            thisIndex = int(np.floor(radius))
+            radialProfile[thisIndex] += imgpsd[col, row]
+            count[thisIndex] += 1.0
+    return radialProfile/count
+
+def avg_radial_profile(imset):
+    ii = None
+    for i in tqdm.tqdm(range(imset.nimg)):
+        f = np.fft.fft2(imset.get_img(i))
+        f_shift = np.fft.fftshift(f)
+        if ii is None:
+            ii = radial_profile(f_shift)
+        else:
+            ii += radial_profile(f_shift)
+    ii = ii / imset.nimg
+    return psd(ii)
+
+
+def psd(f):
+    return np.sqrt(f.real ** 2 + f.imag ** 2)
+def get_dmax(pdb):
+    p =pdb.copy()
+    p.select_atoms(pdb.allatoms2ca())
+    return np.sqrt(np.sum((p.coords[None] - p.coords[:,None]) **2, axis=-1).max())

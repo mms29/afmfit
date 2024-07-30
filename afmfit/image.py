@@ -25,6 +25,7 @@ from numba import njit
 import mrcfile
 import libasd
 from scipy import stats
+# from afmfit.gui import AFMfitViewer
 
 class ImageSet:
 
@@ -95,7 +96,20 @@ class ImageSet:
 
         print("Read %i images of size %i x %i pix at %.2f nm/pix "%(img.shape[0], img.shape[1], img.shape[2], vsize/10.0))
         return cls(img, vsize)
+    @classmethod
+    def read_txt(cls, file, vsize=1.0, unit='nm'):
+        """
+        Read a single image in a TXT file
+        :param file: TXT file
+        :param vsize: pixel size
+        :param unit: unit of the z scale
+        :return: Set of images
+        """
+        arr = np.loadtxt(file, dtype=np.float32)[None]
+        img = cls.arr2img(arr, unit)
 
+        print("Read %i images of size %i x %i pix at %.2f nm/pix "%(img.shape[0], img.shape[1], img.shape[2], vsize/10.0))
+        return cls(img, vsize)
     def write_tif(self, file, unit = "nm"):
         """
         Write a set of images to TIF format
@@ -139,16 +153,19 @@ class ImageSet:
             img = np.array([arr], dtype=np.float32)
         else:
             img = np.array(arr, dtype=np.float32)
-        if unit == "m" or unit == "meter":
-            img*= 1.0e10
-        if unit == "mm" or unit == "millimeter":
-            img*= 1.0e7
-        if unit == "um" or unit == "micrometer":
-            img*= 1.0e4
-        if unit == "nm" or unit == "nanometer":
-            img*= 10.0
-        elif unit == "ang"or unit == "angstrom":
-            img*= 1.0
+        if isinstance(unit, float):
+            img *= unit
+        else:
+            if unit == "m" or unit == "meter":
+                img*= 1.0e10
+            if unit == "mm" or unit == "millimeter":
+                img*= 1.0e7
+            if unit == "um" or unit == "micrometer":
+                img*= 1.0e4
+            if unit == "nm" or unit == "nanometer":
+                img*= 10.0
+            elif unit == "ang"or unit == "angstrom":
+                img*= 1.0
         img = img.transpose(0,2,1)[:,:,::-1]
         return img
     @classmethod
@@ -173,13 +190,13 @@ class ImageSet:
         arr = arr[:,:,::-1].transpose(0,2,1)
         return arr
 
-    # def show(self, **kwargs):
-    #     """
-    #     Show the images
-    #     :param kwargs:
-    #     """
-    #     # viewAFM(self.imgs, vsize = self.vsize,interactive=True,interpolate="spline36", **kwargs)
-    #     AFMfitViewer(self).view(**kwargs)
+    def show(self, **kwargs):
+        """
+        Show the images
+        :param kwargs:
+        """
+        viewAFM(self.imgs, vsize = self.vsize,interactive=True,interpolate="spline36", **kwargs)
+        # AFMfitViewer(self).view(**kwargs)
 
     def show_angular_distr(self, **kwargs):
         """
@@ -306,7 +323,7 @@ class Particles(ImageSet):
 
 class ImageLibrary:
 
-    def __init__(self, imgRawArray, nimgs, size, vsize, view_group=None, angles=None, z_shifts=None):
+    def __init__(self, imgRawArray, nimg, size, vsize, view_group=None, angles=None, z_shifts=None):
         """
         Set of Images representing a projection library
 
@@ -319,7 +336,7 @@ class ImageLibrary:
         :param z_shifts: projection z shift
         """
         self.imgRawArray = imgRawArray
-        self.nimgs = nimgs
+        self.nimg = nimg
         self.size = size
         self.sizex = size
         self.sizey = size
@@ -340,7 +357,7 @@ class ImageLibrary:
         :return: array of nimgs * size *size
         """
         return np.frombuffer(self.imgRawArray, dtype=np.float32,
-                               count=len(self.imgRawArray)).reshape(self.nimgs, self.size,self.size)
+                               count=len(self.imgRawArray)).reshape(self.nimg, self.size,self.size)
 
     def get_img(self, index):
         """
