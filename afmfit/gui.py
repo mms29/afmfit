@@ -21,7 +21,7 @@ import tkinter.ttk as ttk
 from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,
 NavigationToolbar2Tk)
 from tkinter.filedialog import askopenfilename, asksaveasfilename, askdirectory
-from afmfit.utils import get_flattest_angles
+from afmfit.utils import get_flattest_angles, check_chimerax
 import copy
 from tkinter import messagebox
 from tkinter import scrolledtext
@@ -33,6 +33,7 @@ import tqdm
 import time
 from afmfit.utils import run_chimerax
 import threading
+import afmfit
 
 small_font = ("calibri", 12)
 default_font = ("calibri", 15)
@@ -493,6 +494,9 @@ class AFMFitMenu:
             "failed"        : False
         }
 
+        #Chimerax
+        self.path_chimerax = "chimerax"
+
     def get_state(self):
         return self.data["state"]
     def get_status(self):
@@ -596,6 +600,8 @@ class AFMFitMenu:
 
         ---------------------------------------                                    
                """)
+
+        print("Running AFMfit version %s "%afmfit.__version__)
 
 
     def get_steps(self):
@@ -903,11 +909,14 @@ class AFMFitMenu:
         AFMfitViewer(self.data["imset"]).view(toplevel=self.window)
 
     def viewPDB(self):
-        self.data["pdb"].viewChimera()
+        self.ask_chimerax()
+        self.data["pdb"].viewChimera(self.path_chimerax)
     def viewParticles(self):
         AFMfitViewer(self.data["particles"]).view(toplevel=self.window)
 
     def viewNMA(self):
+        self.ask_chimerax()
+
         params= ParamWindow(
             "NMA viewer parameters",
             self.window,
@@ -915,7 +924,8 @@ class AFMFitMenu:
                 "amp": ["Amplitude", "Float", 1000.0, "Amplitude of deformation along each normal mode"],
                 "npoints": ["Number of points", "Integer", 10, "Number of points per trajectories"],
             }).get_params()
-        self.data["nma"].viewChimera(amp=params["amp"], npoints=params["npoints"])
+        self.data["nma"].viewChimera(amp=params["amp"], npoints=params["npoints"],
+                                     path_chimerax=self.path_chimerax)
     def viewSimulator(self):
         simview = AFMfitSimulatorViewer(self.data["pdb"], init_sim=self.data["simulator"])
         simview.view(toplevel=self.window)
@@ -928,7 +938,11 @@ class AFMFitMenu:
             self.console_redirector.restore_stdout()
             self.window.destroy()
 
-
+    def ask_chimerax(self):
+        if not check_chimerax(self.path_chimerax):
+            self.path_chimerax=askopenfilename()
+            if not check_chimerax(self.path_chimerax):
+                raise RuntimeError("Chimerax not found")
 
     def viewMovies(self):
         AFMfitViewer(self.data["reconstructed"]).view(toplevel=self.window)
@@ -950,12 +964,14 @@ class AFMFitMenu:
     def viewPDBs(self):
         pass
     def viewMotions(self):
+        self.ask_chimerax()
+
         prefix = self.data["motions_outfile"]
 
         with open(prefix + "traj.cxc", "w") as f:
             f.write("open %straj*.pdb \n" % (prefix))
             f.write("morph all \n")
-        run_chimerax(prefix + "traj.cxc")
+        run_chimerax(prefix + "traj.cxc", self.path_chimerax)
 class ParamWindow:
     def __init__(self,name, toplevel, params):
         self.params = params

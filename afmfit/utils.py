@@ -494,20 +494,22 @@ def to_mesh(img, vsize, file, resample=1, truemesh=True):
                     f.write("\n")
 
 
-def check_chimerax():
-    return shutil.which("chimerax") is not None
+def check_chimerax(path_chimerax):
+    return shutil.which(path_chimerax) is not None
 
 
-def run_chimerax(args=""):
-    if check_chimerax():
+def run_chimerax(args="", path_chimerax=None):
+    if path_chimerax is None:
+        path_chimerax="chimerax"
+    if check_chimerax(path_chimerax):
         with tempfile.TemporaryDirectory() as tmpdirname:
             script = join(tmpdirname,  "chimerax.sh")
             with open(script, "w") as f:
                 f.write("#! ")
                 f.write(os.environ.get("SHELL"))
                 f.write("\n")
-                f.write("chimerax %s"%args)
-            os.system("chmod 777 %s && %s"%(script, script))
+                f.write("%s %s"%(path_chimerax,args))
+            os.system("chmod +x %s && %s"%(script, script))
     else:
         raise RuntimeError("ChimeraX not found")
 

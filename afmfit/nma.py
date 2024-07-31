@@ -112,7 +112,7 @@ class NormalModesRTB:
 
         return cls(pdb, linear_modes, m_rigidT, m_rigidR, mapping, mapping_len, com)
 
-    def viewChimera(self, amp=1000, npoints= 10):
+    def viewChimera(self, amp=1000, npoints= 10, path_chimerax=None):
         """
         Show modes in ChimeraX
         :param amp: Amplitude
@@ -139,7 +139,7 @@ class NormalModesRTB:
                     f.write("open %s structureModel #%i \n" %(join(tmpDir,"mode%i.dcd"%(m+7)), m+1))
                 f.write("hide all models\n")
                 f.write("show #1 models\n")
-            run_chimerax(cmd_file)
+            run_chimerax(cmd_file, path_chimerax)
 
     def transform(self, angle, shift):
         """

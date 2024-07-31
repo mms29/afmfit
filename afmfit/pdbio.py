@@ -110,14 +110,14 @@ class PDB:
         if self.n_atoms == 0:
             raise RuntimeError("Could not read PDB file : PDB file is empty")
 
-    def viewChimera(self):
+    def viewChimera(self, path_chimerax=None):
         """
         Show PDB in ChimeraX
         """
         with tempfile.TemporaryDirectory() as tmdir:
             fname = os.path.join(tmdir,"pdb.pdb")
             self.write_pdb(fname)
-            run_chimerax(fname)
+            run_chimerax(fname, path_chimerax)
 
     def write_pdb(self, file):
         """
