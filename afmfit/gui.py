@@ -43,6 +43,8 @@ button_color ='#000000'
 completed_color = "#458B00"
 failed_color = "#CD3333"
 
+SCALE_WIDTH = 400
+
 
 class AFMfitImsetFrame:
     def __init__(self, imset, frame, update_callback=None, **kwargs):
@@ -111,7 +113,7 @@ class AFMfitImsetFrame:
         self.currentVar.set(1)
         currentScale = tk.Scale(controlsFrame, from_=1, to=self.imset.nimg, variable=self.currentVar,
                              orient=tk.HORIZONTAL, label="", resolution=1
-                             , command=self.update_imageFrame, length=200)
+                             , command=self.update_imageFrame, length=SCALE_WIDTH)
 
         if self.imset.nimg >1:
             controlsFrame.grid(row=1, column=0)
@@ -171,22 +173,51 @@ class AFMfitPreprocessing(AFMfitViewer):
         toolsFrame.grid(row=0, column=1, sticky="N")
         tk.Label(toolsFrame, text="Image Processing tools", font=default_font).grid(row=0, column=0, sticky="W")
 
-        tk.Button(master=toolsFrame, text="Normalize",
-                  command=self.normalizeUpdate).grid(row=1, column=0, sticky="W")
+
+
+        calibFrame = tk.Frame(master=toolsFrame)
+        calibFrame.grid(row=1, column=0, sticky="W")
+        self.minVar = tk.StringVar()
+        self.maxVar = tk.StringVar()
+
+        tk.Label(calibFrame, text="Min", width=3).grid(row=0, column=0)
+        self.minEntry = tk.Entry(calibFrame, textvariable=self.minVar, width=6)
+        self.minEntry.grid(row=0, column=1)
+        tk.Label(calibFrame, text="Max", width=3).grid(row=0, column=2)
+        self.maxEntry = tk.Entry(calibFrame, textvariable=self.maxVar, width=6)
+        self.maxEntry.grid(row=0, column=3)
+        tk.Button(master=calibFrame, text="Apply",
+                  command=self.calibrateUpdate).grid(row=0, column=4)
+
         tk.Button(master=toolsFrame, text="Reset",
-                  command=self.resetUpdate).grid(row=2, column=0, sticky="W")
+                  command=self.resetUpdate).grid(row=3, column=0, sticky="W")
 
         tk.Button(master=toolsFrame, command=self.quit, height=1, width=10,
                   text="Done", fg=completed_color).grid(row=10, column=0, sticky="SE")
+        tk.Button(master=toolsFrame, text="Normalize",
+                  command=self.normalizeUpdate).grid(row=2, column=0, sticky="W")
+
+        self.resetUpdate()
 
     def normalizeUpdate(self):
         self.mainImageFrame.imset.normalize_mode()
         self.update_processingFrame()
-
-    def resetUpdate(self):
-        self.mainImageFrame.imset = copy.copy(self.input_imset)
+    def calibrateUpdate(self):
+        self.mainImageFrame.imset.set_min(10.0*float(self.minVar.get()))
+        self.mainImageFrame.imset.set_max(10.0*float(self.maxVar.get()))
         self.update_processingFrame()
 
+    def resetUpdate(self):
+        minval = "%.2f"% (self.mainImageFrame.imset.get_imgs().min()/10.0)
+        maxval = "%.2f"% (self.mainImageFrame.imset.get_imgs().max()/10.0)
+        self.minVar.set(minval)
+        self.maxVar.set(maxval)
+        self.minEntry.delete(0, tk.END)
+        self.minEntry.insert(0, minval)
+        self.maxEntry.delete(0, tk.END)
+        self.maxEntry.insert(0, maxval)
+        self.mainImageFrame.imset = copy.deepcopy(self.input_imset)
+        self.update_processingFrame()
     def update_processingFrame(self):
         self.mainImageFrame.update_imageFrame()
 
@@ -292,29 +323,29 @@ class AFMfitPicker(AFMfitViewer):
         trackpylabel.grid(row=0, column=0, sticky="W")
         self.diamScale = tk.Scale(trackpyFrame, from_=1, to=imset.vsize * min(imset.sizex, imset.sizey) // 2 / 10.0 * 2,
                              orient=tk.HORIZONTAL, label="Diameter (nm)", resolution=1
-                             , command=self.update_pickingFrame, length=200)
+                             , command=self.update_pickingFrame, length=SCALE_WIDTH)
         self.diamScale.grid(row=2, column=0, sticky="W")
         self.sepaScale = tk.Scale(trackpyFrame, from_=1, to=imset.vsize * min(imset.sizex, imset.sizey) // 2 / 10.0,
                              orient=tk.HORIZONTAL, label="Separation (nm)", resolution=1
-                             , command=self.update_pickingFrame, length=200)
+                             , command=self.update_pickingFrame, length=SCALE_WIDTH)
         self.sepaScale.grid(row=3, column=0, sticky="W")
         self.minmassScale = tk.Scale(trackpyFrame, from_=0, to=10000,
                                 orient=tk.HORIZONTAL, label="Min mass", resolution=1
-                                , command=self.update_pickingFrame, length=200)
+                                , command=self.update_pickingFrame, length=SCALE_WIDTH)
         self.minmassScale.grid(row=4, column=0, sticky="W")
 
         self.maxsizeScaleVar = tk.DoubleVar()
         maxsizeScale = tk.Scale(trackpyFrame, from_=0, to=imset.vsize * min(imset.sizex, imset.sizey) // 2 / 10.0,
                                 orient=tk.HORIZONTAL, label="Max size (nm)", resolution=1.0,
-                                command=self.update_pickingFrame, length=200, variable=self.maxsizeScaleVar)
+                                command=self.update_pickingFrame, length=SCALE_WIDTH, variable=self.maxsizeScaleVar)
         maxsizeScale.grid(row=5, column=0, sticky="W")
         self.boxScale = tk.Scale(trackpyFrame, from_=1, to=imset.vsize * min(imset.sizex, imset.sizey) // 2 / 10.0 * 2,
                             orient=tk.HORIZONTAL, label="Box size (nm)", resolution=1
-                            , command=self.update_box, length=200)
+                            , command=self.update_box, length=SCALE_WIDTH)
         self.boxScale.grid(row=6, column=0, sticky="W")
         self.padScale = tk.Scale(trackpyFrame, from_=0, to=50,
                             orient=tk.HORIZONTAL, label="Margin (px)", resolution=1
-                            , command=self.update_pad, length=200)
+                            , command=self.update_pad, length=SCALE_WIDTH)
         self.padScale.grid(row=7, column=0, sticky="W")
 
         extractButton = tk.Button(master=toolsFrame, command=self.extract_particles, height=1, width=10, text="Done", fg=completed_color)
@@ -362,7 +393,7 @@ class AFMfitSimulatorViewer(AFMfitViewer):
         tk.Scale(simulatorFrame, from_=1.0,
                                   to=15.0, variable=self.sim_sigma,
                                   orient=tk.HORIZONTAL, label="Smoothness", resolution=0.1
-                                  , command=self.update_simulatorFrame, length=200).grid(row=1, column=0, sticky="W")
+                                  , command=self.update_simulatorFrame, length=SCALE_WIDTH).grid(row=1, column=0, sticky="W")
 
         tk.Button(master=simulatorFrame, command=self.autoSigma, height=1, width=10, text="Auto").grid(row=2, column=0, sticky="W")
 
@@ -370,7 +401,7 @@ class AFMfitSimulatorViewer(AFMfitViewer):
         tk.Scale(simulatorFrame, from_=1.0,
                                   to=13.0, variable=self.sim_quality,
                                   orient=tk.HORIZONTAL, label="Quality", resolution=0.1
-                                  , command=self.update_simulatorFrame, length=200).grid(row=3, column=0, sticky="W")
+                                  , command=self.update_simulatorFrame, length=SCALE_WIDTH).grid(row=3, column=0, sticky="W")
 
 
         pdbFrame = tk.Frame(master=toolsFrame)

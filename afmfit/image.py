@@ -214,7 +214,12 @@ class ImageSet:
         if zero_val is None:
             zero_val = self.imgs.min()
         self.imgs -= zero_val
-        self.imgs[self.imgs < 0.0 ]= 0.0
+        self.set_min(0.0)
+    def set_min(self, min_val):
+        """
+        Set the minimum value of the set
+        """
+        self.imgs[self.imgs <min_val]= min_val
     def set_max(self, max_val):
         """
         Set the maximum value of the set
