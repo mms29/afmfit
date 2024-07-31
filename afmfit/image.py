@@ -25,7 +25,6 @@ from numba import njit
 import mrcfile
 import libasd
 from scipy import stats
-# from afmfit.gui import AFMfitViewer
 
 class ImageSet:
 
@@ -195,7 +194,7 @@ class ImageSet:
         Show the images
         :param kwargs:
         """
-        viewAFM(self.imgs, vsize = self.vsize,interactive=True,interpolate="spline36", **kwargs)
+        viewAFM(self.imgs, vsize = self.vsize,interactive=True, **kwargs)
         # AFMfitViewer(self).view(**kwargs)
 
     def show_angular_distr(self, **kwargs):
@@ -384,8 +383,8 @@ class ImageLibrary:
         Show the set of images
         :param kwargs:
         """
-        # viewAFM(self.get_imgs(), interactive=True, **kwargs)
-        AFMfitViewer(self).view(**kwargs)
+        viewAFM(self.get_imgs(), interactive=True, **kwargs)
+        # AFMfitViewer(self).view(**kwargs)
 
 
 

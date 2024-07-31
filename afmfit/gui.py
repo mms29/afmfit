@@ -1,39 +1,42 @@
+#     AFMfit - Fitting package for Atomic Force Microscopy data
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+import numpy as np
+import matplotlib.pyplot as plt
+import trackpy as tp
+import tkinter as tk
+from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,NavigationToolbar2Tk)
+from tkinter.filedialog import askopenfilename, asksaveasfilename, askdirectory
+from tkinter import messagebox, scrolledtext
+import copy
+from functools import partial
+import traceback
+import pickle
+import afmfit
 import multiprocessing
 import os
 import sys
 
-import numpy as np
-import mrcfile
-from afmfit.pdbio import PDB,  dcd2numpyArr, numpyArr2dcd
+from afmfit.pdbio import PDB, numpyArr2dcd
 from afmfit.nma import NormalModesRTB
 from afmfit.simulator import AFMSimulator, sigma_estimate
-from afmfit.viewer import viewAFM, viewFit, show_angular_distr
-from afmfit.image import mask_stk, mask_interactive, Particles
+from afmfit.image import  Particles
 from afmfit.fitting import Fitter
-from afmfit.utils import  DimRed, align_coords,get_sphere_full, get_angular_distance, \
-    get_init_angles_flat
-import matplotlib.pyplot as plt
-import matplotlib
+from afmfit.utils import  DimRed, get_flattest_angles, check_chimerax_in_path, run_chimerax
 from afmfit.image import ImageSet
-import trackpy as tp
-import tkinter as tk
-import tkinter.ttk as ttk
-from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,
-NavigationToolbar2Tk)
-from tkinter.filedialog import askopenfilename, asksaveasfilename, askdirectory
-from afmfit.utils import get_flattest_angles, check_chimerax_in_path
-import copy
-from tkinter import messagebox
-from tkinter import scrolledtext
-from functools import partial
-import multiprocessing
-import traceback
-import pickle
-import tqdm
-import time
-from afmfit.utils import run_chimerax
-import threading
-import afmfit
+
 
 small_font = ("calibri", 12)
 default_font = ("calibri", 15)
@@ -1102,10 +1105,3 @@ class ConsoleRedirector:
     def restore_stdout(self):
         sys.stdout=self.stdout_orig
         sys.stderr=self.stderr_orig
-
-if __name__ == "__main__":
-    menu = AFMFitMenu()
-    menu.view()
-
-
-
