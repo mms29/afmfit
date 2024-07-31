@@ -30,6 +30,17 @@ python3 -m notebook examples/afmfit_tuto.ipynb
 ```
 _(Computation time : 5 min on a 16-core personal desktop)_
 
+## <span style="color:cyan"> *NEW*</span> - GUI
+
+You can now use most of AFMFit features through the GUI. Make you have [Tkinter](https://docs.python.org/3/library/tkinter.html#module-tkinter) installed. For example (Ubuntu) :
+```
+sudo apt install python3-tk
+```
+Then you can simply run the script:
+```
+/path/to/afmfit/afmfit_gui
+```
+
 ## Authors
 
 Rémi Vuillemot
