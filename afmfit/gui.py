@@ -21,7 +21,7 @@ import tkinter.ttk as ttk
 from matplotlib.backends.backend_tkagg import (FigureCanvasTkAgg,
 NavigationToolbar2Tk)
 from tkinter.filedialog import askopenfilename, asksaveasfilename, askdirectory
-from afmfit.utils import get_flattest_angles, check_chimerax
+from afmfit.utils import get_flattest_angles, check_chimerax_in_path
 import copy
 from tkinter import messagebox
 from tkinter import scrolledtext
@@ -495,7 +495,7 @@ class AFMFitMenu:
         }
 
         #Chimerax
-        self.path_chimerax = "chimerax"
+        self.path_chimerax = None
 
     def get_state(self):
         return self.data["state"]
@@ -564,12 +564,16 @@ class AFMFitMenu:
         ioFrame.grid(row=0, column=0, sticky="W")
         self.setup_io(ioFrame)
 
+        chimeraxFrame = tk.Frame(master=self.window)
+        chimeraxFrame.grid(row=0, column=1)
+        self.setup_chimerax(chimeraxFrame)
+
         menuFrame = tk.Frame(master=self.window)
-        menuFrame.grid(row=1, column=0)
+        menuFrame.grid(row=1, column=0, columnspan=2)
         self.setup_menuFrame(menuFrame)
 
         consoleFrame = tk.Frame(master=self.window)
-        consoleFrame.grid(row=2, column=0, sticky="N")
+        consoleFrame.grid(row=2, column=0, columnspan=2, sticky="N")
         self.setup_console(consoleFrame)
 
         self.welcome()
@@ -588,6 +592,19 @@ class AFMFitMenu:
 
         loadButton.grid(row=0, column=0)
         saveButton.grid(row=0, column=1)
+
+    def setup_chimerax(self, frame):
+        try :
+            self.path_chimerax = check_chimerax_in_path()
+            print("Chimerax detected")
+        except RuntimeError:
+            print("ChimeraX not found")
+        if self.path_chimerax is not None:
+            color = completed_color
+        else:
+            color = failed_color
+        self.chimeraxLabel = tk.Label(text="ChimeraX",master=frame, fg=color)
+        self.chimeraxLabel.grid(row=0, column=0, sticky="E")
 
     def welcome(self):
         print("""
@@ -910,6 +927,8 @@ class AFMFitMenu:
 
     def viewPDB(self):
         self.ask_chimerax()
+        print("hello")
+        print(self.path_chimerax)
         self.data["pdb"].viewChimera(self.path_chimerax)
     def viewParticles(self):
         AFMfitViewer(self.data["particles"]).view(toplevel=self.window)
@@ -939,10 +958,17 @@ class AFMFitMenu:
             self.window.destroy()
 
     def ask_chimerax(self):
-        if not check_chimerax(self.path_chimerax):
-            self.path_chimerax=askopenfilename()
-            if not check_chimerax(self.path_chimerax):
-                raise RuntimeError("Chimerax not found")
+        if self.path_chimerax is None:
+            try :
+                self.path_chimerax= check_chimerax_in_path()
+            except RuntimeError:
+                messagebox.showwarning("Warning", "ChimeraX not found in PATH")
+                path_chimerax=askopenfilename()
+                if os.system("%s --version"%path_chimerax) ==0:
+                    self.chimeraxLabel.config(fg=completed_color)
+                    self.path_chimerax = path_chimerax
+                else:
+                    messagebox.showerror("Error", "Could not run Chimerax at %s"%path_chimerax)
 
     def viewMovies(self):
         AFMfitViewer(self.data["reconstructed"]).view(toplevel=self.window)

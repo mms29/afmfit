@@ -494,24 +494,28 @@ def to_mesh(img, vsize, file, resample=1, truemesh=True):
                     f.write("\n")
 
 
-def check_chimerax(path_chimerax):
-    return shutil.which(path_chimerax) is not None
-
+def check_chimerax_in_path():
+    which = "#!%s which "%os.environ.get("SHELL")
+    if os.system(which +"chimerax") ==0:
+        return "chimerax"
+    elif os.system(which +"ChimeraX") ==0:
+        return "ChimeraX"
+    else:
+        raise RuntimeError("ChimeraX not found")
 
 def run_chimerax(args="", path_chimerax=None):
     if path_chimerax is None:
-        path_chimerax="chimerax"
-    if check_chimerax(path_chimerax):
-        with tempfile.TemporaryDirectory() as tmpdirname:
-            script = join(tmpdirname,  "chimerax.sh")
-            with open(script, "w") as f:
-                f.write("#! ")
-                f.write(os.environ.get("SHELL"))
-                f.write("\n")
-                f.write("%s %s"%(path_chimerax,args))
-            os.system("chmod +x %s && %s"%(script, script))
-    else:
-        raise RuntimeError("ChimeraX not found")
+        path_chimerax=check_chimerax_in_path()
+
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        script = join(tmpdirname,  "chimerax.sh")
+        with open(script, "w") as f:
+            f.write("#! ")
+            f.write(os.environ.get("SHELL"))
+            f.write("\n")
+            f.write("%s %s"%(path_chimerax,args))
+        os.system("chmod +x %s && %s"%(script, script))
+
 
 def get_nolb_path():
     if platform.system() == 'Linux':
