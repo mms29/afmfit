@@ -1105,3 +1105,10 @@ class ConsoleRedirector:
     def restore_stdout(self):
         sys.stdout=self.stdout_orig
         sys.stderr=self.stderr_orig
+
+
+
+if __name__ == "__main__":
+    menu = AFMFitMenu()
+    menu.view()
+
