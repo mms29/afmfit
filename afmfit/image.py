@@ -64,7 +64,7 @@ class ImageSet:
         print("Read %i images of size %i x %i pix at %.2f nm/pix "%(img.shape[0], img.shape[1], img.shape[2], vsize/10.0))
         return cls(img, vsize)
     @classmethod
-    def read_asd(cls, file):
+    def read_asd(cls, file, channel=0):
         """
         Read a set of images in a .asd file
         :param file: asd file
@@ -74,7 +74,11 @@ class ImageSet:
         vsize = (data.header.x_scanning_range/data.header.x_pixel)*10 # nm to ang
         print("scanning range : %f"%data.header.x_scanning_range)
         print("scanning range : %i"%data.header.x_pixel)
-        arr = np.array([data.frames[i].data for i in range(len(data.frames))], dtype=np.float32)
+        if hasattr(data, "frames"):
+            arr = np.array([data.frames[i].data for i in range(len(data.frames))], dtype=np.float32)
+        elif hasattr(data, "channels"):
+            arr = np.array([data.channels[channel][i].data for i in range(len(data.channels[channel]))], dtype=np.float32)
+
 
         img = cls.arr2img(arr, unit="nm")
 
