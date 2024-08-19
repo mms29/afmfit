@@ -878,7 +878,7 @@ class AFMFitMenu:
                 "n_components": ["Number of PCA components", "Integer", 10, ""],
                 "method": ["Method", "Enum", "PCA", "principal component analysis (PCA) or "
                                                     "uniform manifold approximation and projection (UMAP)",
-                           ["PCA", "UMAP"]],
+                           ["pca", "umap"]],
 
             }
         ).get_params()
