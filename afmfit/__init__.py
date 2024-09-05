@@ -18,6 +18,6 @@ afmfit.
 
 A fitting package for Atomic Force Microscopy data.
 """
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 __author__ = 'Rémi Vuillemot'
 

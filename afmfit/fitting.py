@@ -14,9 +14,10 @@
 #     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 from afmfit.pdbio import PDB
-from afmfit.utils import euler2matrix, matrix2euler, get_points_from_angles, translate, get_sphere, select_angles
-from afmfit.viewer import FittingPlotter, show_angular_distr, viewFit
+from afmfit.utils import matrix2euler, select_angles, get_flattest_angles
+from afmfit.viewer import show_angular_distr, viewFit
 from afmfit.utils import run_chimerax, to_mesh
+from afmfit.simulator import AFMSimulator
 
 import numpy as np
 import time
@@ -45,26 +46,27 @@ class ProjMatch:
 
         self.angles = None
         self.shifts = None
-        self.mse = None
+        self.score = None
         self.best_angle = None
         self.best_shift = None
-        self.best_mse = None
+        self.best_score = None
         self.best_fitted_img = None
 
-    def run(self, library, metric="mse",  verbose=True, select_view_group=True):
+    def run(self, library, metric="rmsdp",  verbose=True, select_view_group=True):
         """
         Run projection matching
         :param library: ImageLibrary projection library
-        :param metric: metric to use for the matching : mse | corr | cc
+        :param metric: metric to use for the matching : mse | corr | cc | rmsdp
         :param verbose:
         :param select_view_group: if True, returns the min MSE angles and shifts for each view group
         """
         img_exp = self.img
         img_exp_norm = np.sum(np.square(img_exp))
         nimgs = library.nimg
+        size = img_exp.shape[-1]
 
         # outputs
-        metrics =    np.zeros((nimgs))
+        scores =    np.zeros((nimgs))
         shifts = np.zeros((nimgs, 3))
 
         for i in tqdm.tqdm(range(nimgs), desc="Projection Matching", disable=not verbose):
@@ -74,11 +76,13 @@ class ProjMatch:
 
             if metric == "mse":
                 # calculate mse from correlation
-                metrics[i] = np.sum(np.square(img)) + img_exp_norm -2*_c
+                scores[i] = np.sum(np.square(img)) + img_exp_norm -2*_c
             elif metric == "corr":
-                metrics[i] = -_c
+                scores[i] = -_c
             elif metric == "cc":
-                metrics[i] = -    _c / ( np.sqrt(np.sum(np.square(img))) * np.sqrt(img_exp_norm))
+                scores[i] = 1.0 -    _c / ( np.sqrt(np.sum(np.square(img))) * np.sqrt(img_exp_norm))
+            elif metric == "rmsdp":
+                scores[i] = np.sqrt(1/(size**2) * (np.sum(np.square(img)) + img_exp_norm -2*_c))
 
 
             # set the shifts
@@ -86,32 +90,29 @@ class ProjMatch:
             shifts[i,1] =_y *  self.vsize
             shifts[i,2] =library.z_shifts[i]
 
-        # select the best MSE for each view group
+        # select the best score for each view group
         if select_view_group:
             min_metric_group = library.view_group[
-                (np.arange(library.nview), np.argmin(metrics[library.view_group], axis=1))]
+                (np.arange(library.nview), np.argmin(scores[library.view_group], axis=1))]
         else:
             min_metric_group = np.arange(nimgs)
         self.shifts = shifts[min_metric_group]
-        self.mse = metrics[min_metric_group]
+        self.scores = scores[min_metric_group]
         self.angles = library.angles[min_metric_group]
 
         # Outputs
-        bestidx = np.argmin(self.mse)
+        bestidx = np.argmin(self.scores)
         self.best_angle = self.angles[bestidx]
         self.best_shift = self.shifts[bestidx]
         fit = self.pdb.copy()
         fit.rotate(self.best_angle)
         fit.translate(self.best_shift)
         img = self.simulator.pdb2afm(fit, 0.0)
-        self.best_mse = np.sum(np.square( img - img_exp))
-        self.best_mse_calc = self.mse[bestidx]
+        self.best_score = self.scores[bestidx]
         self.best_fitted_img = img
 
         if verbose:
-            print("DONE")
-            print("Calculated MSE : %f"%self.best_mse_calc)
-            print("Actual MSE : %f"%self.best_mse)
+            print("Best score : %f"%self.best_score)
 
     def show(self, n_plot=3):
         """
@@ -120,13 +121,13 @@ class ProjMatch:
         """
         fig, ax = plt.subplots(n_plot, 5, figsize=(20, 15))
 
-        minmse = np.argsort(self.mse)
+        minscore = np.argsort(self.scores)
         for i in range(n_plot):
             fit = self.pdb.copy()
-            fit.rotate(self.angles[minmse[i]])
-            fit.translate(self.shifts[minmse[i]])
+            fit.rotate(self.angles[minscore[i]])
+            fit.translate(self.shifts[minscore[i]])
             pest = self.simulator.pdb2afm(fit, 0.0)
-            mse = np.linalg.norm(pest - self.img)
+            score = np.linalg.norm(pest - self.img)
             ax[i, 0].imshow(pest.T, cmap="afmhot", origin="lower")
             ax[i, 1].imshow(self.img.T, cmap="afmhot", origin="lower")
             ax[i, 2].imshow(np.abs(self.img.T - pest.T), cmap="jet", origin="lower")
@@ -134,14 +135,14 @@ class ProjMatch:
             ax[i, 3].plot(self.img[self.size // 2], color="tab:blue")
             ax[i, 4].plot(pest[:, self.size // 2], color="tab:red")
             ax[i, 4].plot(self.img[:, self.size // 2], color="tab:blue")
-            ax[i, 0].set_title('Fitted [%.2f]' % (mse))
+            ax[i, 0].set_title('Fitted [%.2f]' % (score))
             ax[i, 1].set_title('Input')
             ax[i, 2].set_title('Diff')
     def show_angular_distr(self):
         """
         Display a flatten projection of angular distribution and their correlation in the sphere
         """
-        show_angular_distr(self.angles, color=self.mse, cmap = "jet", proj = "hammer", cbar = True)
+        show_angular_distr(self.angles, color=self.scores, cmap = "jet", proj = "hammer", cbar = True)
 
     @classmethod
     def trans_match(cls, img1, img2):
@@ -172,9 +173,9 @@ class NMAFit:
         """
         Flexible Fitting of one image with NMA
         """
-        self.best_mse = None
+        self.best_score = None
         self.best_rmsd = None
-        self.mse = None
+        self.score = None
         self.rmsd = None
         self.best_eta = None
         self.best_fitted_img = None
@@ -183,7 +184,7 @@ class NMAFit:
         self.best_shift = None
 
     def fit(self, img, nma, simulator, target_pdb=None, zshift=None,
-            n_iter=10, lambda_r=100, lambda_f=100, verbose=True, plot=False, q_init=None, init_plotter=None):
+            n_iter=10, lambda_r=100, lambda_f=100, verbose=True,q_init=None,):
         """
         Run the fitting
         :param img: Image to fit size*size
@@ -195,15 +196,14 @@ class NMAFit:
         :param lambda_r: Lambda for rigid modes
         :param lambda_f: Lambda for flexible modes
         :param verbose: True to print progress bar
-        :param plot: DEPRECATED
         :param q_init: Initial normal mode amplitude
-        :param init_plotter: DEPRECATED
         """
         dtimetot = time.time()
 
         # Inputs
         pdb = nma.pdb
         pexp = img
+        size = pexp.shape[-1]
         if target_pdb is None:
             target_pdb = pdb
         if zshift is None:
@@ -211,7 +211,7 @@ class NMAFit:
 
         # define output arrays
         dcd = np.zeros((n_iter+1, pdb.n_atoms, 3), dtype=np.float32)
-        mse = np.zeros(n_iter+1)
+        score = np.zeros(n_iter+1)
         rmsd =np.zeros(n_iter+1)
         eta = np.zeros((n_iter + 1, nma.nmodes_total))
         fitted_imgs =np.zeros((n_iter+1, simulator.size, simulator.size), dtype=np.float32)
@@ -221,26 +221,19 @@ class NMAFit:
         # init state
         fitted = nma.applySpiralTransformation(eta=eta[0], pdb=pdb)
         psim = simulator.pdb2afm(fitted, zshift=zshift)
-        mse[0]=np.linalg.norm(psim - pexp)**2
+
+        score[0]= self.get_rmsdp(psim , pexp)
+
         rmsd[0]=fitted.getRMSD(target_pdb, align=True)
         dcd[0] = fitted.coords
         fitted_imgs[0] = psim
 
         # Define regularization
         regul = np.zeros( nma.nmodes_total)
-        regul[:6] = lambda_r/ pdb.n_atoms
-        regul[6:] = lambda_f/ pdb.n_atoms
+        regul[:6] = 1 / (pdb.n_atoms * (lambda_r**2))
+        regul[6:] = 1 / (pdb.n_atoms * (lambda_f**2))
         linear_modes_line =  nma.linear_modes.reshape(nma.nmodes_total, nma.natoms * 3)
         r_matrix = np.dot(linear_modes_line, linear_modes_line.T) * regul
-
-        if plot:
-            if init_plotter is not None:
-                plotter = init_plotter
-                plotter.update_imgs(psim, pexp)
-                plotter.draw()
-            else:
-                plotter = FittingPlotter()
-                plotter.start(psim, pexp, mse, rmsd, interactive=True)
 
         for i in range(n_iter):
             # Compute the gradient
@@ -258,7 +251,7 @@ class NMAFit:
 
             # Update outputs
             dcd[i+1] = fitted.coords
-            mse[i+1] = np.linalg.norm(psim - pexp)**2
+            score[i+1] = self.get_rmsdp(psim , pexp)
             rmsd[i+1]= fitted.getRMSD(target_pdb, align=True)
             fitted_imgs[i+1]= psim
 
@@ -267,27 +260,21 @@ class NMAFit:
             if any(norm<  1.0):
                 for q in range(i, n_iter):
                     dcd[q + 1] = dcd[i+1]
-                    mse[q + 1] = mse[i+1]
+                    score[q + 1] = score[i+1]
                     rmsd[q + 1] = rmsd[i+1]
                     fitted_imgs[q + 1] = fitted_imgs[i+1]
                 break
 
             if verbose:
-                print("Iter %i = %.2f ; %.2f" % (i, mse[i+1], rmsd[i+1]))
+                print("Iter %i = %.2f ; %.2f" % (i, score[i+1], rmsd[i+1]))
                 print(eta[i + 1])
 
-            if plot:
-                if init_plotter is not None:
-                    plotter.update_imgs(psim, pexp)
-                    plotter.draw()
-                else:
-                    plotter.update(psim, pexp, mse, rmsd)
-
         # outputs
-        best_idx= np.argmin(mse)
-        self.best_mse = mse[best_idx]
+        score = np.sqrt(score)
+        best_idx= np.argmin(score)
+        self.best_score = score[best_idx]
         self.best_rmsd= rmsd[best_idx]
-        self.mse = mse
+        self.score = score
         self.rmsd= rmsd
 
         self.best_eta= eta[best_idx]
@@ -301,7 +288,7 @@ class NMAFit:
         if verbose:
             print("\t TIME_TOTAL   => %.4f s" % (time.time() - dtimetot))
 
-    def q_estimate(self, psim, pexp, dq, r_matrix, q0, mask=None):
+    def q_estimate(self, psim, pexp, dq, r_matrix, q0):
         """
         Estimate the NMA amplitude that fits psim into pexp
         :param psim: size*size
@@ -309,26 +296,21 @@ class NMAFit:
         :param dq: Gradient of the image  nmodes* size*size
         :param r_matrix: regularization parameter (lambda) diagonal matrix
         :param q0: initial NMA amplitude
-        :param mask: mask to apply to the images
         :return: NMA amplitudes
         """
         nmodes = dq.shape[0]
         size = psim.shape[0]
         dy = (psim - pexp)
-        if mask is not None:
-            dy*= mask
-            dq*= mask
-
         dqt_line = dq.reshape(nmodes, size**2)
         dy_line = dy.reshape(size**2).T
         dqtdq = np.dot(dqt_line, dqt_line.T)
+        dq2 = (1/size**2) * dqtdq + r_matrix
+        dqtdy =  (1/size**2) * np.dot(dqt_line, dy_line)
+        dqtdy += np.dot(r_matrix, q0)
+        return - np.linalg.solve(dq2,dqtdy.T)
 
-        dq2_inv = np.linalg.inv(dqtdq + r_matrix)
-
-        dqtdy =  np.dot(dqt_line, dy_line) + np.dot(r_matrix, q0)
-        return - np.dot( dq2_inv,dqtdy.T)
-
-
+    def get_rmsdp(self, p1, p2):
+        return (1 / p1.shape[-1] ** 2) * np.sum(np.square(p1 - p2))
 class Fitter:
     def __init__(self, pdb, imgs, simulator, target_pdbs=None):
         """
@@ -351,7 +333,7 @@ class Fitter:
         #RIGID outputs
         self.rigid_angles=  None
         self.rigid_shifts=  None
-        self.rigid_mses = None
+        self.rigid_scores = None
         self.rigid_imgs = None
         self.rigid_time = None
         self.rigid_done = False
@@ -360,7 +342,7 @@ class Fitter:
         self.flexible_angles = None
         self.flexible_shifts = None
         self.flexible_eta = None
-        self.flexible_mses = None
+        self.flexible_scores = None
         self.flexible_rmsds = None
         self.flexible_coords = None
         self.flexible_imgs = None
@@ -386,22 +368,22 @@ class Fitter:
         with open(file, "rb") as f:
             return pickle.load(f)
 
-    def get_best_mse(self):
+    def get_best_score(self):
         """
-        Per iamge MSE
+        Per image score
         :return:
         """
-        return self.flexible_mses[(np.arange(self.nimgs), np.argmin(self.flexible_mses, axis=1))]
+        return self.flexible_scores[(np.arange(self.nimgs), np.argmin(self.flexible_scores, axis=1))]
     def get_best_rmsd(self):
         """
         Per image RMSD
         :return:
         """
-        return self.flexible_rmsds[(np.arange(self.nimgs), np.argmin(self.flexible_mses, axis=1))]
+        return self.flexible_rmsds[(np.arange(self.nimgs), np.argmin(self.flexible_scores, axis=1))]
 
     def fit_rigid(self, n_cpu, angular_dist=10.0, verbose=False, zshift_range=None,
                   init_zshift=None, near_angle=None, near_angle_cutoff=None, select_view_group = True,
-                  true_zshift=True, init_library=None, metric="mse", init_angles=None):
+                  true_zshift=True, init_library=None, metric="rmsdp", init_angles=None):
         """
         Performs the rigid fitting on the set of images
         :param n_cpu: Number of CPUs
@@ -414,7 +396,7 @@ class Fitter:
         :param select_view_group: if True, returns the min MSE angles and shifts for each view group
         :param true_zshift: if False, the z shift are estimated by shifting the entire image (faster but less accurate)
         :param init_library: uses an input library of images instead of generating a new one
-        :param metric: metric to use for the fitting : mse | corr | cc
+        :param metric: metric to use for the fitting : mse | corr | cc | rmsdp
         :param init_angles: provide a list of projection angles
         """
         dt = time.time()
@@ -444,12 +426,12 @@ class Fitter:
         # create output arrays
         anglesRawArray = RawArray("d", self.nimgs*3*nview)
         shiftsRawArray = RawArray("d", self.nimgs*3*nview)
-        msesRawArray = RawArray("d", self.nimgs*nview)
+        scoresRawArray = RawArray("d", self.nimgs*nview)
         imgsRawArray = RawArray("f", self.nimgs * self.simulator.size*self.simulator.size)
 
         # run
         p = Pool(n_cpu, initializer=self.init_rigid_processes, initargs=(library, anglesRawArray,
-                    shiftsRawArray,msesRawArray,imgsRawArray, self.nimgs, nview, self.simulator.size,
+                    shiftsRawArray,scoresRawArray,imgsRawArray, self.nimgs, nview, self.simulator.size,
                     select_view_group, metric))
         for _ in tqdm.tqdm(p.imap_unordered(self.run_rigid_processes, workdata), total=len(workdata),
                            desc="Projection Matching", disable=not verbose):
@@ -464,8 +446,8 @@ class Fitter:
                                    count=len(anglesRawArray)).reshape(self.nimgs,nview, 3)
         self.rigid_shifts = frombuffer(shiftsRawArray, dtype=np.float64,
                                    count=len(shiftsRawArray)).reshape(self.nimgs,nview, 3)
-        self.rigid_mses = frombuffer(msesRawArray, dtype=np.float64,
-                                   count=len(msesRawArray)).reshape(self.nimgs,nview)
+        self.rigid_scores = frombuffer(scoresRawArray, dtype=np.float64,
+                                   count=len(scoresRawArray)).reshape(self.nimgs,nview)
         self.rigid_imgs = frombuffer(imgsRawArray, dtype=np.float32,
                                    count=len(imgsRawArray)).reshape(self.nimgs,self.simulator.size,self.simulator.size)
         self.rigid_time = time.time() - dt
@@ -473,7 +455,7 @@ class Fitter:
 
 
     def fit_flexible(self, n_cpu, nma, verbose=False, n_best_views=20,dist_views=20,
-                     n_iter=10, lambda_r=200, lambda_f=100, plot=False):
+                     n_iter=10, lambda_f=10, lambda_r=None):
         """
         Performs the flexible fitting on the set of images
         :param n_cpu: Number of CPUs
@@ -482,16 +464,17 @@ class Fitter:
         :param n_best_views: Number of views from the rigid fitting to process
         :param dist_views: Angular distance between views (°)
         :param n_iter: number of iteration of the NMA flexible fitting
-        :param lambda_r: Lambda for rigid modes
         :param lambda_f: Lambda for flexible modes
-        :param plot: DEPRECATED
+        :param lambda_r: Lambda for rigid modes if specified, else lambda_f
         """
         dt = time.time()
         if not self.rigid_done:
             raise RuntimeError("Perform rigid fitting first")
+        if lambda_r is None:
+            lambda_r = lambda_f
 
         # Arrays
-        msesRawArray   = RawArray("d", self.nimgs * (n_iter+1))
+        scoresRawArray   = RawArray("d", self.nimgs * (n_iter+1))
         rmsdsRawArray  = RawArray("d", self.nimgs * (n_iter+1))
         coordsRawArray = RawArray("f", self.nimgs * nma.pdb.n_atoms * 3)
         etaRawArray    = RawArray("d", self.nimgs * nma.nmodes_total)
@@ -509,8 +492,8 @@ class Fitter:
         # Create pool
         if n_cpu >1:
             p = Pool(n_cpu, initializer=self.init_flexible_processes, initargs=(rmsdsRawArray,anglesRawArray,
-                                    shiftsRawArray, msesRawArray, coordsRawArray, etaRawArray, imgsRawArray,
-                                    nma, n_iter, n_best_views, dist_views, plot, lambda_r, lambda_f))
+                                    shiftsRawArray, scoresRawArray, coordsRawArray, etaRawArray, imgsRawArray,
+                                    nma, n_iter, n_best_views, dist_views, lambda_r, lambda_f))
 
             # Run Pool
             for _ in tqdm.tqdm(p.imap_unordered(self.run_flexible_processes, workdata), total=len(workdata), desc="Flexible Fitting"
@@ -518,16 +501,16 @@ class Fitter:
                 pass
         else:
             self.init_flexible_processes(rmsdsRawArray, anglesRawArray,
-                                                      shiftsRawArray, msesRawArray, coordsRawArray, etaRawArray,
+                                                      shiftsRawArray, scoresRawArray, coordsRawArray, etaRawArray,
                                                       imgsRawArray,
-                                                      nma, n_iter, n_best_views, dist_views, plot, lambda_r, lambda_f)
+                                                      nma, n_iter, n_best_views, dist_views, lambda_r, lambda_f)
             for w in workdata:
                 self.run_flexible_processes(w)
 
 
         # Outputs
-        self.flexible_mses = frombuffer(msesRawArray, dtype=np.float64,
-                                   count=len(msesRawArray)).reshape(self.nimgs, (n_iter+1))
+        self.flexible_scores = frombuffer(scoresRawArray, dtype=np.float64,
+                                   count=len(scoresRawArray)).reshape(self.nimgs, (n_iter+1))
         self.flexible_rmsds = frombuffer(rmsdsRawArray, dtype=np.float64,
                                    count=len(rmsdsRawArray)).reshape(self.nimgs, (n_iter+1))
         self.flexible_coords = frombuffer(coordsRawArray, dtype=np.float32,
@@ -550,12 +533,12 @@ class Fitter:
         self.flexible_done=True
 
 
-    def init_rigid_processes(self, library,anglesRawArray,shiftsRawArray, msesRawArray,imgsRawArray, nimgs,
+    def init_rigid_processes(self, library,anglesRawArray,shiftsRawArray, scoresRawArray,imgsRawArray, nimgs,
                                  nview,size, select_view_group, metric):
         global library_global
         global angles_global
         global shifts_global
-        global mses_global
+        global scores_global
         global imgs_global
         global select_view_group_global
         global metric_global
@@ -566,8 +549,8 @@ class Fitter:
 
         shifts_global = frombuffer(shiftsRawArray, dtype=np.float64,
                                    count=len(shiftsRawArray)).reshape(nimgs,nview, 3)
-        mses_global = frombuffer(msesRawArray, dtype=np.float64,
-                                   count=len(msesRawArray)).reshape(nimgs,nview)
+        scores_global = frombuffer(scoresRawArray, dtype=np.float64,
+                                   count=len(scoresRawArray)).reshape(nimgs,nview)
         imgs_global = frombuffer(imgsRawArray, dtype=np.float32,
                                    count=len(imgsRawArray)).reshape(nimgs, size, size)
         select_view_group_global = select_view_group
@@ -585,30 +568,29 @@ class Fitter:
         projMatch.run(library=library_global, verbose=False, select_view_group=select_view_group_global,
                       metric=metric_global)
 
-        idx_best_views =np.argsort(projMatch.mse)
+        idx_best_views =np.argsort(projMatch.scores)
         angles_global[rank,:] = projMatch.angles[idx_best_views]
         shifts_global[rank,:] = projMatch.shifts[idx_best_views]
-        mses_global[rank,:] = projMatch.mse[idx_best_views]
+        scores_global[rank,:] = projMatch.scores[idx_best_views]
         imgs_global[rank] = projMatch.best_fitted_img
 
-    def init_flexible_processes(self, rmsdsRawArray,anglesRawArray,shiftsRawArray, msesRawArray, coordsRawArray, etaRawArray,
-                                imgsRawArray, nma, n_iter, n_best_views, dist_views, plot, lambda_r, lambda_f):
+    def init_flexible_processes(self, rmsdsRawArray,anglesRawArray,shiftsRawArray, scoresRawArray, coordsRawArray, etaRawArray,
+                                imgsRawArray, nma, n_iter, n_best_views, dist_views, lambda_r, lambda_f):
         global imgs_global
         global eta_global
         global rmsds_global
         global coords_global
         global angles_global
         global shifts_global
-        global mses_global
+        global scores_global
         global n_best_views_global
         global dist_views_global
         global nma_global
-        global plot_global
         global n_iter_global
         global lambda_r_global
         global lambda_f_global
-        mses_global = frombuffer(msesRawArray, dtype=np.float64,
-                                   count=len(msesRawArray)).reshape(self.nimgs, (n_iter+1))
+        scores_global = frombuffer(scoresRawArray, dtype=np.float64,
+                                   count=len(scoresRawArray)).reshape(self.nimgs, (n_iter+1))
         rmsds_global = frombuffer(rmsdsRawArray, dtype=np.float64,
                                    count=len(rmsdsRawArray)).reshape(self.nimgs, (n_iter+1))
         coords_global = frombuffer(coordsRawArray, dtype=np.float32,
@@ -624,7 +606,6 @@ class Fitter:
         nma_global = nma
         n_best_views_global = n_best_views
         dist_views_global = dist_views
-        plot_global = plot
         n_iter_global = n_iter
         lambda_r_global = lambda_r
         lambda_f_global = lambda_f
@@ -652,13 +633,12 @@ class Fitter:
             # Fit the image with NMA
             nmafit = NMAFit()
             nmafit.fit(img=self.imgs[rank], nma=tnma, simulator=self.simulator, target_pdb=self.target_pdbs[rank],
-                       n_iter=n_iter_global, lambda_r=lambda_r_global, lambda_f=lambda_f_global, verbose=False,
-                       plot=plot_global)
+                       n_iter=n_iter_global, lambda_r=lambda_r_global, lambda_f=lambda_f_global, verbose=False)
             nmafits.append(nmafit)
 
         # Outputs
-        best_nma_idx = np.argmin([f.best_mse for f in nmafits])
-        mses_global[rank] = nmafits[best_nma_idx].mse
+        best_nma_idx = np.argmin([f.best_score for f in nmafits])
+        scores_global[rank] = nmafits[best_nma_idx].score
         rmsds_global[rank] = nmafits[best_nma_idx].rmsd
         coords_global[rank] = nmafits[best_nma_idx].best_coords
         eta_global[rank] = nmafits[best_nma_idx].best_eta
@@ -672,7 +652,7 @@ class Fitter:
         """
         if not self.rigid_done:
             raise RuntimeError("Perform fitting first")
-        show_angular_distr(self.rigid_angles[:,0], np.sqrt(self.rigid_mses[:,0]), cbar=True)
+        show_angular_distr(self.rigid_angles[:,0], np.sqrt(self.rigid_scores[:,0]), cbar=True)
     def show(self, **kwargs):
         """
         Opens the fitting viewer
@@ -711,23 +691,58 @@ class Fitter:
     def get_stats(self):
         """
         Get stats from the flexible fitting
-        :return: mse_rigid, mse_flexible, rmsd, % of decrease
+        :return: score_rigid, score_flexible, rmsd, % of decrease
         """
-        if self.flexible_mses is None:
+        if self.flexible_scores is None:
             raise RuntimeError("Perform fitting first")
-        mser  = np.sqrt(self.flexible_mses[:,0])
-        msef  = np.sqrt(np.min(self.flexible_mses, axis=1))
-        rmsd  = self.flexible_rmsds[(np.arange(self.nimgs),np.argmin(self.flexible_mses, axis=1))]
+        scorer  = self.flexible_scores[:,0]
+        scoref  = np.min(self.flexible_scores, axis=1)
+        rmsd  = self.flexible_rmsds[(np.arange(self.nimgs),np.argmin(self.flexible_scores, axis=1))]
         def get_pct(vr, vf):
             return 100*(1- (vr/vf))
-        return mser.mean(), (msef ).mean(), rmsd.mean(), get_pct((mser).mean(),(msef ).mean())
+        return scorer.mean(), (scoref ).mean(), rmsd.mean(), get_pct((scorer).mean(),(scoref ).mean())
 
     def show_stats(self):
         """
         Prints stats from the flexible fitting
         """
-        mser, msef, rmsd, pct = self.get_stats()
-        print("Best MSE rigid : %.2f "%(mser))
-        print("Best MSE flexible : %.2f "%(msef))
-        print("MSE decrease : %.2f %%"%(pct))
+        scorer, scoref, rmsd, pct = self.get_stats()
+        print("Best score rigid : %.2f "%(scorer))
+        print("Best score flexible : %.2f "%(scoref))
+        print("score decrease : %.2f %%"%(pct))
         print("Best RMSD: %.2f Ang "%(rmsd))
+
+
+
+def sigma_estimate(imgs, pdb, n_cpu=4, angular_dist=10, metric="rmsdp",quality_ratio=8.0,
+                    min_sigma=2.0, max_sigma=10.0, resolution=0.5, angle_percent=20.0, zshift_range=None,
+                    init_zshift=None, near_angle=None, near_angle_cutoff=None, true_zshift=False):
+    if near_angle is None:
+        angle = get_flattest_angles(pdb, percent=angle_percent, angular_dist=angular_dist)
+    else:
+        angle=None
+
+    sigma_linspace = np.arange(min_sigma,max_sigma, resolution)
+
+    val = []
+    for i in tqdm.tqdm(range(len(sigma_linspace))):
+        sigma = sigma_linspace[i]
+        sim = AFMSimulator(size=imgs.sizex, vsize=imgs.vsize, sigma=sigma,
+                           quality_ratio=quality_ratio)
+        proj = sim.project_library(
+            n_cpu=n_cpu, pdb=pdb, angular_dist=angular_dist, init_zshift=init_zshift, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff,
+            verbose=True, true_zshift=true_zshift,
+            zshift_range=zshift_range, init_angles=angle)
+        fitter = Fitter(pdb=pdb, simulator=sim, imgs=imgs.imgs)
+        fitter.fit_rigid(n_cpu=n_cpu, angular_dist=angular_dist, verbose=True, zshift_range=zshift_range,
+                         init_zshift=init_zshift, near_angle=near_angle, near_angle_cutoff=near_angle_cutoff, select_view_group=True,
+                         true_zshift=true_zshift, init_library=proj, metric=metric)
+        val.append(np.mean(fitter.rigid_scores[:,0]))
+        del proj
+        del fitter
+
+    plt.figure()
+    plt.plot(sigma_linspace, val)
+    plt.show()
+
+    return sigma_linspace[np.argmin(val)], sigma_linspace, val

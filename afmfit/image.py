@@ -25,6 +25,8 @@ from numba import njit
 import mrcfile
 import libasd
 from scipy import stats
+from scipy.ndimage import laplace, gaussian_filter
+from skimage.transform import rescale
 
 class ImageSet:
 
@@ -245,6 +247,38 @@ class ImageSet:
         fig, ax = plt.subplots(1, 1)
         ax.hist(self.imgs.flatten(), bins)
         fig.show()
+
+    def gaussian(self, sigma):
+        for i in range(self.nimg):
+            self.imgs[i] = gaussian_filter(self.imgs[i], sigma=sigma)
+
+    def laplace(self):
+        for i in range(self.nimg):
+            self.imgs[i] = laplace(self.imgs[i])
+    def rescale(self, scale):
+        vsize= self.vsize/scale
+        outimgs = np.zeros((self.nimg, int(self.sizex*scale),
+                            int(self.sizey*scale)), dtype=self.imgs.dtype)
+        for i in range(self.nimg):
+            outimgs[i] = rescale(self.imgs[i], scale, anti_aliasing=True)
+        return ImageSet(outimgs, vsize)
+
+    def smooth_mask(self):
+        N = self.sizex
+        mask = np.zeros((N, N))
+        for i in range(N):
+            for j in range(N):
+                x = i - N / 2 + 0.5
+                y = j - N / 2 + 0.5
+                r = np.sqrt(x ** 2 + y ** 2)
+                mask[i, j] = 1 - 1.0 / (1 + np.exp(N / 2 - r))
+        for i in range(self.nimg):
+            self.imgs[i] *= mask
+
+    def remove_image(self,index):
+        self.nimg -= 1
+        self.imgs = np.delete(self.imgs, index, axis=0)
+
 class Particles(ImageSet):
 
     def __init__(self, imset, centroids, boxsize):

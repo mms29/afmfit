@@ -195,13 +195,13 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
     stk1 = fitter.rigid_imgs
     stk_est = fitter.imgs
     sim     = fitter.simulator
-    rigid_mse = fitter.rigid_mses
+    rigid_score = fitter.rigid_scores
     if fitter.flexible_done:
         stk2 = fitter.flexible_imgs
-        flexible_mse = fitter.flexible_mses
+        flexible_score = fitter.flexible_scores
     else:
         stk2 = np.zeros(stk1.shape)
-        flexible_mse = rigid_mse
+        flexible_score = rigid_score
     nimg = fitter.nimgs
     size = sim.size
     vsize=sim.vsize
@@ -226,11 +226,11 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
         ang1 = deg2rad(fitter.rigid_angles[idx, :, 0])
         ang2 = deg2rad(fitter.rigid_angles[idx, :, 1]) - np.pi / 2
         ang3 = deg2rad(fitter.rigid_angles[idx, :, 2])
-        angc = fitter.rigid_mses[idx]
+        angc = fitter.rigid_scores[idx]
         if fitter.flexible_done:
             angf = [deg2rad(fitter.flexible_angles[idx, 0]), deg2rad(fitter.flexible_angles[idx, 1])- np.pi / 2, deg2rad(fitter.flexible_angles[idx, 2])]
         else:
-            angf = [ang1[0], ang2[0], ang3[0]]
+            angf =None
         angr = [ang1[0], ang2[0], ang3[0]]
         return ang1, ang2, ang3, angc, angf,angr
 
@@ -257,8 +257,9 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
     axdfr = fig.add_subplot(gsdiff[0, 1])
     axdff = fig.add_subplot(gsdiff[0, 2])
 
-    axmse = fig.add_subplot(gsstat[0, 0])
-    axrms = fig.add_subplot(gsstat[0, 1])
+    axscore = fig.add_subplot(gsstat[0, 0])
+    axscoref = fig.add_subplot(gsstat[0, 1])
+    axrms = fig.add_subplot(gsstat[0, 2])
 
     axan1 = fig.add_subplot(gsang[0, 0], projection="hammer")
     axan2 = fig.add_subplot(gsang[0, 1], projection="hammer")
@@ -269,33 +270,35 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
                               extent=[0,extent,extent,0], interpolation=interpolate)
     im3 = aximf.imshow(img3, origin="lower", cmap="afmhot", vmin = 0.0, vmax = max_amp,
                               extent=[0,extent,extent,0], interpolation=interpolate)
-    im4 = axdif.imshow(diff1, origin="lower", cmap="jet", vmin = 0.0, vmax = max_amp,
+    im4 = axdif.imshow(diff1, origin="lower", cmap="seismic", vmin = -max_diff, vmax = max_diff,
                               extent=[0,extent,extent,0], interpolation=interpolate)
-    im5 = axdfr.imshow(diff2, origin="lower", cmap="jet", vmin = -max_diff, vmax = max_diff,
+    im5 = axdfr.imshow(diff2, origin="lower", cmap="seismic", vmin = -max_diff, vmax = max_diff,
                               extent=[0,extent,extent,0], interpolation=interpolate)
-    im6 = axdff.imshow(diff3, origin="lower", cmap="jet", vmin = -max_diff, vmax = max_diff,
+    im6 = axdff.imshow(diff3, origin="lower", cmap="seismic", vmin = -max_diff, vmax = max_diff,
                               extent=[0,extent,extent,0], interpolation=interpolate)
 
-    aximg.set_title("$I_{exp}$")
-    aximr.set_title("$I_{rigid}$")
-    aximf.set_title("$I_{flex}$")
-    axdif.set_title("$|I_{rigid} - I_{flex}|$")
-    axdfr.set_title("$|I_{rigid} - I_{exp}|$")
-    axdff.set_title("$|I_{flex} - I_{exp}|$")
+    aximg.set_title("Input")
+    aximr.set_title("Rigid fitting")
+    aximf.set_title("Flexible fitting")
+    axdif.set_title("Rigid vs flexible")
+    axdfr.set_title("Input vs rigid fitting")
+    axdff.set_title("Input vs flexible fitting")
     aximg.set_ylabel("nm")
     axdif.set_ylabel("nm")
     axdif.set_xlabel("nm")
     axdfr.set_xlabel("nm")
     axdff.set_xlabel("nm")
     if fitter.flexible_done:
-        lmsf = axmse.plot(np.sqrt(flexible_mse[0]), "o-")
-        lmsr = axmse.plot(np.sqrt(rigid_mse[0,:flexible_mse.shape[1]]), "o-")
+        lmsf = axscoref.plot(flexible_score[0], "o-")
+        lmsr = axscore.plot(rigid_score[0], "o-")
         lrms = axrms.plot(fitter.flexible_rmsds[0], "o-")
     else:
-        lmsr = axmse.plot(np.sqrt(rigid_mse[0]), "o-")
-    axmse.set_title("pixel-wise $l_2$")
-    axmse.set_xlabel("iter")
-    axrms.set_title("RMSD ($\AA$)")
+        lmsr = axscore.plot(rigid_score[0], "o-")
+    axscore.set_title("pixel-RMSD rigid fitting ($\AA$)")
+    axscore.set_xlabel("proj. views")
+    axscoref.set_title("pixel-RMSD flexible fitting ($\AA$)")
+    axscoref.set_xlabel("iter")
+    axrms.set_title("structure-RMSD ($\AA$)")
     axrms.set_xlabel("iter")
 
     if pca is not None:
@@ -317,8 +320,9 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
     axan1.yaxis.set_minor_locator(plt.FixedLocator(np.pi / 12 * np.linspace(-5, 5, 11)))
     axan1.grid(True, which='minor')
     san1 =axan1.scatter(ang3, ang2 , c=angc, cmap="viridis")
-    san1r =axan1.scatter(angr[2], angr[1] , c="orange")
-    san1f =axan1.scatter(angf[2], angf[1] , c="red")
+    san1r =axan1.scatter(angr[2], angr[1], c="red", marker="^", label="rigid")
+    if angf is not None:
+        san1f =axan1.scatter(angf[2], angf[1], c="red", marker="s", label="flexible")
     axan1.set_xlabel("Psi")
     axan1.set_ylabel("Tilt")
 
@@ -329,14 +333,19 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
     axan2.yaxis.set_minor_locator(plt.FixedLocator(np.pi / 12 * np.linspace(-5, 5, 11)))
     axan2.grid(True, which='minor')
     san2 = axan2.scatter(ang1, ang2 , c=angc, cmap="viridis")
-    san2r =axan2.scatter(angr[0], angr[1] , c="orange")
-    san2f =axan2.scatter(angf[0], angf[1] , c="red")
+    san2r =axan2.scatter(angr[0], angr[1] , c="red", marker="^", label="rigid")
+    if angf is not None:
+        san2f =axan2.scatter(angf[0], angf[1] , c="red", marker="s", label="flexible")
     axan2.set_xlabel("Rot")
     axan2.set_ylabel("Tilt")
 
-    # if cbar and color is not None:
-    #     fig.colorbar(im2, ax=ax)
+    axan1.legend()
+    axan2.legend()
 
+    cbar3 = fig.colorbar(san1, ax=axan1)
+    cbar4 = fig.colorbar(san2, ax=axan2)
+    cbar3.set_label("p-RMSD")
+    cbar4.set_label("p-RMSD")
 
     vinitax = plt.axes([0.6, 0.02, 0.05, 0.04])
     vinitBox = TextBox(vinitax, "", initial=str(0))
@@ -365,26 +374,32 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
         cbar2.update_normal(im4)
         cbar2.update_ticks()
         if fitter.flexible_done:
-            mser =np.sqrt(rigid_mse[idx, :flexible_mse.shape[1]])
-            msef =np.sqrt(flexible_mse[idx])
+            scorer =rigid_score[idx]
+            scoref =flexible_score[idx]
             rmsd = fitter.flexible_rmsds[idx]
-            lmsr[0].set_ydata(mser)
-            lmsf[0].set_ydata(msef)
+            lmsr[0].set_ydata(scorer)
+            lmsf[0].set_ydata(scoref)
             lrms[0].set_ydata(rmsd)
-            axmse.set_ylim(min(mser.min(), msef.min()), max(mser.max(), msef.max()))
+            axscore.set_ylim(scorer.min(), scorer.max())
+            axscoref.set_ylim( scoref.min(),scoref.max())
             axrms.set_ylim(rmsd.min(), rmsd.max())
         else:
-            mser =np.sqrt(rigid_mse[idx])
-            lmsr[0].set_ydata(mser)
-            axmse.set_ylim(mser.min(),mser.max())
+            scorer =rigid_score[idx]
+            lmsr[0].set_ydata(scorer)
+            axscore.set_ylim(scorer.min(),scorer.max())
         if pca is not None:
             spca.set_offsets(pca[idx,:2])
         san1.set_offsets( np.array([ang3, ang2]).T)
         san1r.set_offsets( np.array([angr[2], angr[1]]))
-        san1f.set_offsets( np.array([angf[2], angf[1]]))
         san2r.set_offsets( np.array([angr[0], angr[1]]))
-        san2f.set_offsets( np.array([angf[0], angf[1]]))
         san2.set_offsets( np.array([ang1, ang2]).T)
+        if angf is not None:
+            san1f.set_offsets( np.array([angf[2], angf[1]]))
+            san2f.set_offsets( np.array([angf[0], angf[1]]))
+        cbar3.update_normal(san1)
+        cbar3.update_ticks()
+        cbar4.update_normal(san2)
+        cbar4.update_ticks()
         fig.canvas.draw_idle()
 
     doneax = plt.axes([0.7, 0.02, 0.1, 0.04])
@@ -415,126 +430,6 @@ def viewFit(fitter, pca=None,interpolate="bicubic", diff_range=None):
 
     plt.show(block=True)
     return fig
-
-
-class FittingPlotter:
-
-    def __init__(self):
-        """
-        DEPRECATED
-        """
-        self.fig = None
-        self.ax = None
-        self.imgf_p = None
-        self.imge_p = None
-        self.imgfe_p = None
-        self.mse_p = None
-        self.rmsd_p = None
-        self.mse_a = None
-        self.rmsd_a = None
-
-    def start(self, imgf, imge, mse, rmsd, interactive = False):
-        if interactive:
-            plt.ion()
-        size=imge.shape[0]
-        vmax = max(imge.max(), imgf.max())
-        fig, ax = plt.subplots(1, 7, figsize=(15, 4))
-        self.imgf_p  = ax[0].imshow(imgf.T, origin="lower", cmap="afmhot", vmax = vmax)
-        self.imge_p  = ax[1].imshow(imge.T, origin="lower", cmap="afmhot", vmax = vmax)
-        self.imgfe_p = ax[2].imshow((imge -imgf).T, origin="lower", cmap="jet")
-        self.mse_p  = ax[3].plot(np.arange(len(mse)), np.sqrt(mse), zorder=1)
-        self.rmsd_p =ax[4].plot(np.arange(len(rmsd)), rmsd, zorder=1)
-        self.imgfx  = ax[5].plot(imgf[size//2])
-        self.imgex  = ax[5].plot(imge[size//2])
-        self.imgfy  = ax[6].plot(imgf[:, size//2])
-        self.imgey  = ax[6].plot(imge[:, size//2])
-        ax[0].set_title("Fitted")
-        ax[1].set_title("Target")
-        ax[2].set_title("Diff")
-        ax[3].set_title("RMSE")
-        ax[4].set_title("RMSD ($\\AA$)")
-        ax[5].set_title("Slice X")
-        ax[6].set_title("Slice Y")
-
-        self.fig=fig
-        self.ax=ax
-        fig.show()
-
-
-    def update_imgs(self, imgf, imge):
-        size=imge.shape[0]
-        vmax = max(imge.max(), imgf.max())
-
-        #imgs
-        self.imgf_p.set_data(imgf.T)
-        self.imge_p.set_data(imge.T)
-        self.imgf_p.set_clim(vmax=vmax)
-        self.imge_p.set_clim(vmax=vmax)
-        self.imgfe_p.set_data((imge -imgf).T)
-        self.imgfx[0].set_ydata(imgf[size//2])
-        self.imgex[0].set_ydata(imge[size//2])
-        self.imgfy[0].set_ydata(imgf[:, size//2])
-        self.imgey[0].set_ydata(imge[:, size//2])
-
-    def plot_attempt(self,length, mses, rmsds):
-        n_lines = len(mses)
-        size = len(mses[0])
-        x = np.arange(length - size, length)
-        self.mse_a = []
-        self.rmsd_a = []
-        for n in range(n_lines):
-            l = self.ax[3].plot(x, np.sqrt(mses[n]), "o-", color="grey", zorder=0)
-            self.mse_a.append(l)
-            l = self.ax[4].plot(x, rmsds[n], "o-", color="grey", zorder=0)
-            self.rmsd_a.append(l)
-
-    def clear_attempt(self):
-        if self.mse_a is not None:
-            for i in range(len(self.mse_a)):
-                self.mse_a[i][0].remove()
-            self.mse_a = None
-        if self.rmsd_a is not None:
-            for i in range(len(self.rmsd_a)):
-                self.rmsd_a[i][0].remove()
-            self.rmsd_a = None
-
-    def update(self, imgf, imge, mse, rmsd, mse_a=None, rmsd_a=None):
-
-        #imgs
-        self.update_imgs(imgf, imge)
-
-        if mse_a is not None and rmsd_a is not None:
-            self.clear_attempt()
-            self.plot_attempt(len(mse), mse_a, rmsd_a)
-        #mse
-        x = np.arange(len(mse))
-        minmse = np.min(np.sqrt(mse))
-        maxmse = np.max(np.sqrt(mse))
-        rangemse = (maxmse-minmse)
-        minmse -= rangemse*0.1
-        maxmse += rangemse*0.1
-        self.mse_p[0].set_xdata(x)
-        self.mse_p[0].set_ydata(np.sqrt(mse))
-        self.ax[3].set_xlim(0,len(mse))
-        self.ax[3].set_ylim(minmse,maxmse)
-        #rmsd
-        x = np.arange(len(rmsd))
-        minrmsd = np.min(rmsd)
-        maxrmsd = np.max(rmsd)
-        rangermsd = (maxrmsd-minrmsd)
-        minrmsd -= rangermsd*0.1
-        maxrmsd += rangermsd*0.1
-        self.rmsd_p[0].set_xdata(x)
-        self.rmsd_p[0].set_ydata(rmsd)
-        self.ax[4].set_xlim(0,len(rmsd))
-        self.ax[4].set_ylim(minrmsd,maxrmsd)
-
-        self.draw()
-
-
-    def draw(self):
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
 
 def show_angular_distr(angles, color=None, cmap = "jet", proj = "hammer", cbar = False, vmax=None):
     """

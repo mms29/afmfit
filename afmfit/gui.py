@@ -57,6 +57,7 @@ class AFMfitImsetFrame:
         self.im = None
         self.cbar = None
         self.currentVar = None
+        self.currentScale = None
 
         self.update_callback= update_callback
 
@@ -67,7 +68,7 @@ class AFMfitImsetFrame:
         self.cbar.update_normal(self.im)
         self.cbar.update_ticks()
         self.fig.canvas.draw_idle()
-
+        self.currentScale.configure(to=self.imset.nimg)
         if self.update_callback is not None:
             self.update_callback()
 
@@ -115,7 +116,7 @@ class AFMfitImsetFrame:
         right_button = tk.Button(master=controlsFrame, command=right, height=1, width=10, text=">")
         self.currentVar = tk.IntVar()
         self.currentVar.set(1)
-        currentScale = tk.Scale(controlsFrame, from_=1, to=self.imset.nimg, variable=self.currentVar,
+        self.currentScale = tk.Scale(controlsFrame, from_=1, to=self.imset.nimg, variable=self.currentVar,
                              orient=tk.HORIZONTAL, label="", resolution=1
                              , command=self.update_imageFrame, length=SCALE_WIDTH)
 
@@ -123,7 +124,7 @@ class AFMfitImsetFrame:
             controlsFrame.grid(row=1, column=0)
             left_button.grid(row=0, column=0)
             right_button.grid(row=0, column=1)
-            currentScale.grid(row=0, column=2)
+            self.currentScale.grid(row=0, column=2)
 
         toolbarFrame = tk.Frame(master=frame, background=bg_color)
         toolbarFrame.grid(row=2, column=0, sticky="s")
@@ -200,12 +201,19 @@ class AFMfitPreprocessing(AFMfitViewer):
                   text="Done", fg=completed_color).grid(row=10, column=0, sticky="SE")
         tk.Button(master=toolsFrame, text="Normalize",
                   command=self.normalizeUpdate).grid(row=2, column=0, sticky="W")
+        tk.Button(master=toolsFrame, text="Discard current frame",
+                  command=self.discard).grid(row=3, column=0, sticky="W")
 
         self.resetUpdate()
 
     def normalizeUpdate(self):
         self.mainImageFrame.imset.normalize_mode()
         self.update_processingFrame()
+
+    def discard(self):
+        self.mainImageFrame.imset.remove_image(self.mainImageFrame.get_current())
+        self.update_processingFrame()
+
     def calibrateUpdate(self):
         self.mainImageFrame.imset.set_min(10.0*float(self.minVar.get()))
         self.mainImageFrame.imset.set_max(10.0*float(self.maxVar.get()))
@@ -629,10 +637,11 @@ class AFMFitMenu:
             "importAFM"      : ["Import AFM data", self.importAFMdata, self.viewAFMdata],
             "preprocess"     : ["Preprocessing", self.preprocess, self.viewAFMdata],
             "picking"        : ["Pick particles",  self.picking, self.viewParticles],
+            "preprocessPar"  : ["Particle Preprocessing", self.preprocessParticles, self.viewParticles],
             "importPDB"      : ["Import PDB", self.importPDB, self.viewPDB],
             "simulator"      : ["Setup simulator", self.setupSimulator, self.viewSimulator],
-            "calculateNMA"   : ["Calculate NMA", self.calculateNMA, self.viewNMA],
             "rigidFit"       : ["Rigid Fitting", self.rigidFit, self.viewrigidFit],
+            "calculateNMA"   : ["Normal mode analysis", self.calculateNMA, self.viewNMA],
             "flexibleFit"    : ["Flexible Fitting", self.flexibleFit, self.viewrigidFit],
             "exportMovies"   : ["Export Fitted Images", self.exportMovies, self.viewMovies],
             "exportPDBs"     : ["Export Fitted PDBs", self.exportPDBs, self.viewPDBs],
@@ -715,6 +724,11 @@ class AFMFitMenu:
         preprocessor.view(toplevel=self.window)
         self.data["imset"] = preprocessor.mainImageFrame.imset
 
+    def preprocessParticles(self):
+        preprocessor = AFMfitPreprocessing(self.data["particles"])
+        preprocessor.view(toplevel=self.window)
+        self.data["particles"] = preprocessor.mainImageFrame.imset
+
     def picking(self):
         picker = AFMfitPicker(self.data["imset"])
         picker.view(toplevel=self.window)
@@ -764,7 +778,11 @@ class AFMFitMenu:
             {
                 "ncpu": ["Number of CPUs", "Integer", multiprocessing.cpu_count()//2, "Number of CPU cores to use"],
                 "angular_dist": ["Angular distance (°)", "Float", 10.0, "Minimum angular distance between projected views"],
-                "flatonly": ["Flat orientation only", "Bool", True, "Use only projection views that keeps the model flat relative to the Z-axis"],
+                "flatonly": ["Restrict proj. views to :", "Enum", "Flat", "Uses only a subset of projection views and discard the others. "
+                            "- Flat: keep only the proj. views that keeps the molecule flat relative to the z-axis.\n"
+                            "- Init: keep only the initial proj. views.\n"
+                            "- None: keep all the prj. views.",
+                             ["Flat", "Init", "None"]],
                 "flatper": ["% of flatness", "Float", 10.0, "Keep only the N% flattest angles", "flatonly"],
                 "zshift_range": ["Z-shift range (Ang)", "Float", 20.0,
                              "Range of search in the z-shift direction"],
@@ -774,10 +792,16 @@ class AFMFitMenu:
                              "Performs a true projection for each Z-shift points, more time consuming"],
             }
         ).get_params()
-        if params["flatonly"]:
+        if params["flatonly"] == "Flat":
             angle = get_flattest_angles(self.data["pdb"], angular_dist=int(params["angular_dist"]), percent=params["flatper"])
+            near_angle = None
+        elif params["flatonly"] == "Init":
+            near_angle = [0,0,0]
+            angle = None
         else:
             angle = None
+            near_angle = None
+        near_angle_cutoff = 1.0
         self.window.config(cursor="watch")
         self.window.update()
         fitter.fit_rigid(n_cpu=params["ncpu"],
@@ -789,6 +813,8 @@ class AFMFitMenu:
                          init_zshift=None,
                          init_angles = angle,
                          select_view_group = True,
+                         near_angle=near_angle,
+                         near_angle_cutoff=near_angle_cutoff,
                          true_zshift=params["true_zshift"],
                          init_library=None)
 
@@ -805,7 +831,7 @@ class AFMFitMenu:
                                  "The defautl value is typically sufficient to converge. Fewer iteration reduce computation time."],
                 "lambda": ["Lambda", "Float", 10.0,
                                  "Parameter that controls the balance between data fitting and prior structure."
-                                 " Larger values leads to smaller data fitting. Smaller values may overfit."],
+                                 " Smaller values leads to smaller data fitting. Larger values may overfit."],
                 "n_best_views": ["Num. of projection views", "Integer", 10,
                                  "Run a flexible fitting for the number of best projection views selected."],
                 "dist_views": ["Angle dist. between projection views", "Float",15,
@@ -822,8 +848,8 @@ class AFMFitMenu:
                             n_best_views=params['n_best_views'],
                             dist_views=params['dist_views'],
                             n_iter=params['n_iter'],
-                            lambda_r=params['lambda']**2,  #
-                            lambda_f=params['lambda']**2,
+                            lambda_r=params['lambda'],  #
+                            lambda_f=params['lambda'],
                             verbose=True)
 
         self.data["fitter"] = fitter
@@ -990,6 +1016,9 @@ class AFMFitMenu:
 
         self.data["dimred"].show(ax=[ax1, ax2], alpha=params["alpha"])
 
+        if self.data["dimred"].method == "pca":
+            self.data["dimred"].show_pca_ev()
+
     def viewPDBs(self):
         pass
     def viewMotions(self):
@@ -1006,6 +1035,7 @@ class ParamWindow:
         self.params = params
         self.name = name
         self.toplevel = toplevel
+        self.status=False
 
     def info(self, text):
         messagebox.showinfo("Info", text)
@@ -1040,6 +1070,8 @@ class ParamWindow:
 
     def get_params(self):
         self.start()
+        if not self.status:
+            raise RuntimeError("Canceled")
         out_params = {}
         for i,k in enumerate(self.params):
             val = self.tkparams[i].get()
@@ -1070,10 +1102,15 @@ class ParamWindow:
             else:
                 tk.Entry(self.window, textvariable=var).grid(row=i, column=1)
                 tk.Button(self.window, command=partial(self.info, self.get_info(k)) , text='Info').grid(row=i, column=2)
-        tk.Button(self.window, command=self.window.destroy , text='Done').grid(row=len(self.params), column=0)
+        tk.Button(self.window, command=self.done , text='Done').grid(row=len(self.params), column=0)
 
 
+    def done(self):
+        self.status=True
+        self.window.destroy()
     def on_closing(self):
+        self.status=False
+        print("hello")
         self.window.destroy()
 
 class ConsoleRedirector:

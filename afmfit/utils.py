@@ -74,10 +74,9 @@ class DimRed:
         else:
             self.dimred = PCA(n_components=self.n_components,  **kwargs)
 
-        data = []
-        for i in range(self.n_data):
-            data.append(self.coords[i].flatten())
-        self.data = self.dimred.fit_transform(np.array(data))
+        crd = self.coords.reshape( self.n_data, self.pdb.n_atoms*3)
+        self.data = self.dimred.fit_transform(crd)
+        self.data *= 1/(self.pdb.n_atoms**0.5)
 
     @classmethod
     def from_fitter(cls, fitter, n_components, method="pca", **kwargs):
@@ -129,7 +128,8 @@ class DimRed:
 
     def traj2coords(self, traj):
         _, n_points = traj.shape
-        outcoords = self.dimred.inverse_transform(traj.T).reshape(n_points, self.pdb.n_atoms, 3)
+        outcoords = self.dimred.inverse_transform(traj.T * (self.pdb.n_atoms**0.5)
+                                                  ).reshape(n_points, self.pdb.n_atoms, 3)
         return outcoords
 
     def show_pca_ev(self):
@@ -220,7 +220,7 @@ class DimRed:
                 n_points = len(traj)
             with open(tmpdir + "traj.cxc", "w") as f:
                 for i in range(n_points):
-                    f.write("open %straj%i.pdb \n" % (tmpdir, i + 1))
+                    f.write("open %straj%s.pdb \n" % (tmpdir, str(i + 1).zfill(4)))
                 f.write("morph #1-%i \n" % (n_points))
             run_chimerax(tmpdir +"traj.cxc")
 
@@ -569,3 +569,5 @@ def get_dmax(pdb):
     p =pdb.copy()
     p.select_atoms(pdb.allatoms2ca())
     return np.sqrt(np.sum((p.coords[None] - p.coords[:,None]) **2, axis=-1).max())
+
+
