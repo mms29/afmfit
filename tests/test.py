@@ -15,7 +15,7 @@
 #
 import unittest
 from afmfit.pdbio import PDB
-from afmfit.utils import get_cc, get_angular_distance
+from afmfit.utils import get_cc, get_angular_distance, get_flattest_angles
 from os.path import join
 import numpy as np
 from afmfit.nma import NormalModesRTB
@@ -115,7 +115,7 @@ class TestFitting(unittest.TestCase):
 
         nmafit = NMAFit()
         nmafit.fit(img=pexp,nma=nma, simulator=sim,target_pdb=target, zshift=zshift,
-                   n_iter=5, lambda_f=nma.pdb.n_atoms/(10**2), lambda_r=nma.pdb.n_atoms/(5**2),verbose=False, plot=False)
+                   n_iter=5, lambda_f=10.0,verbose=False)
         self.assertGreater(nmafit.rmsd[0], 3.0)
         self.assertLess(nmafit.rmsd[-1], 1.0)
 
@@ -177,10 +177,9 @@ class TestFitting(unittest.TestCase):
         ref = PDB( join(get_tests_data(), "ref.pdb"))
         ref.center()
         nimg = 10
-        angle_gt = np.zeros((nimg,3))
+        all_angles = get_flattest_angles(ref, percent=10.0, angular_dist=angular_dist)
+        angle_gt = all_angles[:nimg]
         shift_gt = np.zeros((nimg,3))
-        angle_gt[:,0] = np.linspace(0,360, nimg)
-        angle_gt[:,1] = np.linspace(-20,20, nimg)
         shift_gt[:,0] = np.linspace(-20,20, nimg)
         shift_gt[:,1] = np.linspace(-20,20, nimg)
         shift_gt[:,2] = 41.6
@@ -197,7 +196,8 @@ class TestFitting(unittest.TestCase):
             imgs.append(sim.pdb2afm(rot, 0.0))
 
         fitter = Fitter(pdb=ref, imgs=imgs, simulator=sim, target_pdbs=targets)
-        fitter.fit_rigid( n_cpu=N_CPU_TOTAL, angular_dist=angular_dist, verbose=True, zshift_range=zshift_range)
+        fitter.fit_rigid( n_cpu=N_CPU_TOTAL, angular_dist=angular_dist, verbose=True, zshift_range=zshift_range,
+                          init_angles=all_angles)
 
         for i in range(nimg):
             adist = get_angular_distance(fitter.rigid_angles[i,0], angle_gt[i])
@@ -213,11 +213,11 @@ class TestFitting(unittest.TestCase):
         sim = AFMSimulator(size=40, vsize=7.0, beta=1.0, sigma=3.2, cutoff=40)
         zshift_range = np.linspace(-20,20,10)
 
-        angle_gt = np.zeros((nimg,3))
+        all_angles = get_flattest_angles(nma.pdb, percent=10.0, angular_dist=15)
+
+        angle_gt = all_angles[:nimg]
         shift_gt = np.zeros((nimg,3))
         eta_gt = np.zeros((nimg, nma.nmodes_total))
-        angle_gt[:,0] = np.linspace(0,360, nimg)
-        angle_gt[:,1] = np.linspace(-20,20, nimg)
         shift_gt[:,0] = np.linspace(-20,20, nimg)
         shift_gt[:,1] = np.linspace(-20,20, nimg)
         shift_gt[:,2] = 41.6
@@ -235,9 +235,9 @@ class TestFitting(unittest.TestCase):
         # viewAFM(imgs, interactive=True)
 
         fitter = Fitter(pdb=nma.pdb, imgs=imgs, simulator=sim, target_pdbs=targets)
-        fitter.fit_rigid( n_cpu=N_CPU_TOTAL, angular_dist=10, verbose=True, zshift_range=zshift_range)
+        fitter.fit_rigid( n_cpu=N_CPU_TOTAL, angular_dist=15, verbose=True, zshift_range=zshift_range, init_angles=all_angles)
         fitter.fit_flexible( n_cpu=N_CPU_TOTAL, nma=nma, verbose=True, n_best_views=3,
-                     n_iter=10,  lambda_f=nma.pdb.n_atoms/(10**2), lambda_r=nma.pdb.n_atoms/(5**2), plot=False)
+                     n_iter=10,  lambda_f=10.0)
 
         for i in range(nimg):
             self.assertLess(3.0, fitter.flexible_rmsds[i,0])
