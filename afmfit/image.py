@@ -363,6 +363,21 @@ class Particles(ImageSet):
 
         return ImageSet(outimgs, vsize=self.vsize)
 
+    def remove_image(self, index):
+        print("hello///")
+        self.remove_centroid(index)
+        super().remove_image(index)
+
+    def remove_centroid(self, index):
+        c = 0
+        for i in range(self.imset.nimg):
+            for j in range(len(self.centroids[i])):
+                if c == index:
+                    del self.centroids[i][j]
+                    return
+                c += 1
+        raise RuntimeError("Can't find centroid index : %i" % index)
+
 class ImageLibrary:
 
     def __init__(self, imgRawArray, nimg, size, vsize, view_group=None, angles=None, z_shifts=None):

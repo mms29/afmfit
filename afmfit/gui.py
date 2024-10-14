@@ -890,7 +890,7 @@ class AFMFitMenu:
             pdb.write_pdb("%s.pdb"%(file))
             numpyArr2dcd(fitter.flexible_coords, "%s.dcd"%(file))
         else:
-            for i in range(fitter.nimg):
+            for i in range(fitter.nimgs):
                 pdb.coords = fitter.flexible_coords[i]
                 pdb.write_pdb("%s%s.pdb"%(file, str(i+1).zfill(5)))
 

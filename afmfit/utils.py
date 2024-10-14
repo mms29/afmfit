@@ -74,9 +74,9 @@ class DimRed:
         else:
             self.dimred = PCA(n_components=self.n_components,  **kwargs)
 
-        crd = self.coords.reshape( self.n_data, self.pdb.n_atoms*3)
+        crd = self.coords.reshape( self.n_data, self.coords.shape[1]*3)
         self.data = self.dimred.fit_transform(crd)
-        self.data *= 1/(self.pdb.n_atoms**0.5)
+        self.data *= 1/(self.coords.shape[1]**0.5)
 
     @classmethod
     def from_fitter(cls, fitter, n_components, method="pca", **kwargs):
@@ -128,8 +128,8 @@ class DimRed:
 
     def traj2coords(self, traj):
         _, n_points = traj.shape
-        outcoords = self.dimred.inverse_transform(traj.T * (self.pdb.n_atoms**0.5)
-                                                  ).reshape(n_points, self.pdb.n_atoms, 3)
+        outcoords = self.dimred.inverse_transform(traj.T * (self.coords.shape[1]**0.5)
+                                                  ).reshape(n_points, self.coords.shape[1], 3)
         return outcoords
 
     def show_pca_ev(self):
